@@ -304,8 +304,9 @@ func _sender() -> int:
 
 func _on_peer_connected(id: int) -> void:
 	if multiplayer.is_server():
-		if in_mission or players.size() >= MAX_PLAYERS:
-			print("Rejecting peer %d (mission running or full)" % id)
+		var mission_over: bool = world != null and world.ended
+		if players.size() >= MAX_PLAYERS or mission_over:
+			print("Rejecting peer %d (squad full or mission over)" % id)
 			multiplayer.multiplayer_peer.disconnect_peer(id)
 
 
@@ -317,7 +318,7 @@ func _on_peer_disconnected(id: int) -> void:
 		world.show_message("%s left the game" % pname)
 	if multiplayer.is_server():
 		_broadcast_lobby()
-	if test_mode == "server" and not _test_done:
+	if test_mode in ["server", "server_late"] and not _test_done:
 		_test_done = true
 		var ok: bool = world != null and world.started and world.server_enemy_count_max > 0
 		print("[test] SERVER %s: client left; enemies spawned max=%d" % ["OK" if ok else "FAIL", world.server_enemy_count_max if world else -1])
@@ -354,12 +355,21 @@ func register_player(pname: String) -> void:
 		clean = "Trooper %d" % (players.size() + 1)
 	players[id] = {"name": clean}
 	_broadcast_lobby()
+	if in_mission:
+		# Drop-in: send the late joiner straight into the running mission.
+		rpc_id(id, "rpc_start_mission", players, mission_seed)
+		if world != null:
+			world.sync_players()
+			world.ready_peers[id] = true
+			net_all("announce", ["%s dropped in to reinforce the squad!" % clean])
 
 
 @rpc("authority", "call_remote", "reliable")
 func sync_lobby(p: Dictionary) -> void:
 	players = p
 	lobby_changed.emit()
+	if world != null:
+		world.sync_players()
 
 
 @rpc("authority", "call_remote", "reliable")
@@ -469,7 +479,7 @@ func _start_test() -> void:
 		"smoke", "smokefail":
 			player_name = "SmokeTester"
 			start_singleplayer()
-		"server":
+		"server", "server_late":
 			player_name = "TestHost"
 			var e := host_game(DEFAULT_PORT + 1)
 			print("[test] server hosting on %d err='%s'" % [DEFAULT_PORT + 1, e])
@@ -499,7 +509,10 @@ func _process(_delta: float) -> void:
 				var scene := get_tree().current_scene
 				print("[test] MENU OK scene=", scene.name if scene else "none")
 				get_tree().quit(0)
-		"server":
+		"server", "server_late":
+			if test_mode == "server_late" and not in_mission:
+				print("[test] server_late: starting mission solo before client joins")
+				start_mission()
 			if not in_mission and players.size() >= 2:
 				print("[test] server: client registered, starting mission. players=", players)
 				start_mission()

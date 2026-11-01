@@ -12,3 +12,8 @@ sleep 2
 $G --headless --path . -- --test=client | grep "\[test\]"
 wait
 grep "\[test\]" /tmp/ds_server.log
+$G --headless --path . -- --test=server_late > /tmp/ds_server_late.log 2>&1 &
+sleep 4
+$G --headless --path . -- --test=client | grep "\[test\]"
+wait
+grep "\[test\]" /tmp/ds_server_late.log

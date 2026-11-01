@@ -370,6 +370,12 @@ func _add_player(pid: int, index: int) -> void:
 	players[pid] = p
 
 
+func sync_players() -> void:
+	for pid in Game.players.keys():
+		if not players.has(pid):
+			_add_player(int(pid), players.size())
+
+
 func remove_player(pid: int) -> void:
 	if players.has(pid):
 		players[pid].queue_free()
