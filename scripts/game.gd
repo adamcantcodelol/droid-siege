@@ -479,6 +479,13 @@ func _start_test() -> void:
 			print("[test] client joining err='%s'" % e2)
 		"menu":
 			pass
+		"shot":
+			await get_tree().create_timer(2.5).timeout
+			await _save_shot("/tmp/ds_menu.png")
+			start_singleplayer()
+			await get_tree().create_timer(9.0).timeout
+			_save_shot("/tmp/ds_game.png")
+			get_tree().quit(0)
 
 
 func _process(_delta: float) -> void:
@@ -522,6 +529,12 @@ func _process(_delta: float) -> void:
 				_test_done = true
 				print("[test] SMOKE FAIL timeout phase=", world.phase if world else -1)
 				get_tree().quit(1)
+
+
+func _save_shot(path: String) -> void:
+	await RenderingServer.frame_post_draw
+	get_viewport().get_texture().get_image().save_png(path)
+	print("[test] saved ", path)
 
 
 func finish_test(ok: bool, text: String) -> void:

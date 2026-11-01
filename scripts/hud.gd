@@ -50,7 +50,7 @@ func _ready() -> void:
 	fill.bg_color = Color(0.2, 0.75, 0.3)
 	health_bar.add_theme_stylebox_override("fill", fill)
 	root.add_child(health_bar)
-	ammo_label = _label(root, 26, Vector2(-300, -90), Control.PRESET_BOTTOM_RIGHT)
+	ammo_label = _label(root, 24, Vector2(-300, -120), Control.PRESET_BOTTOM_RIGHT)
 	ammo_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	ammo_label.size = Vector2(280, 80)
 
