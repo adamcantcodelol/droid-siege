@@ -39,6 +39,8 @@ var enemies_root: Node3D
 var fx_root: Node3D
 var post_visuals := []
 var gunship: Node3D
+var nav_region: NavigationRegion3D
+var nav_polys := 0
 var test_speed := 1.0
 var test_cd := 0.0
 var test_elapsed := 0.0
@@ -57,6 +59,8 @@ func _ready() -> void:
 	enemies_root = _child_node("Enemies")
 	fx_root = _child_node("FX")
 	_build_level()
+	if multiplayer.is_server():
+		_bake_nav()
 	var keys := Game.players.keys()
 	keys.sort()
 	for i in keys.size():
@@ -117,7 +121,7 @@ func _add_box(pos: Vector3, size: Vector3, color: Color, rot_y: float = 0.0) -> 
 	b.add_child(cs)
 	b.position = pos
 	b.rotation.y = rot_y
-	add_child(b)
+	nav_region.add_child(b)
 	return b
 
 
@@ -140,10 +144,22 @@ func _add_pillar(pos: Vector3, radius: float, height: float, color: Color) -> vo
 	cs.shape = sh
 	b.add_child(cs)
 	b.position = pos + Vector3(0, height / 2.0, 0)
-	add_child(b)
+	nav_region.add_child(b)
 
 
 func _build_level() -> void:
+	nav_region = NavigationRegion3D.new()
+	nav_region.name = "Level"
+	var nm := NavigationMesh.new()
+	nm.geometry_parsed_geometry_type = NavigationMesh.PARSED_GEOMETRY_STATIC_COLLIDERS
+	nm.geometry_collision_mask = 1
+	nm.cell_size = 0.4
+	nm.cell_height = 0.2
+	nm.agent_radius = 0.8
+	nm.agent_height = 1.8
+	nm.agent_max_climb = 0.4
+	nav_region.navigation_mesh = nm
+	add_child(nav_region)
 	# Sky / environment (Geonosis-style dusty orange planet)
 	var env := Environment.new()
 	env.background_mode = Environment.BG_SKY
@@ -227,6 +243,19 @@ func _build_level() -> void:
 	add_child(gunship)
 
 
+func _bake_nav() -> void:
+	var map := get_world_3d().navigation_map
+	NavigationServer3D.map_set_cell_size(map, 0.4)
+	NavigationServer3D.map_set_cell_height(map, 0.2)
+	nav_region.bake_navigation_mesh(false)
+	nav_polys = nav_region.navigation_mesh.get_polygon_count()
+	print("[nav] baked polygons=", nav_polys)
+
+
+func nav_path_length(a: Vector3, b: Vector3) -> int:
+	return NavigationServer3D.map_get_path(get_world_3d().navigation_map, a, b, true).size()
+
+
 func _build_post(i: int) -> void:
 	var center: Vector3 = POSTS[i]
 	var csg := CSGCombiner3D.new()
@@ -256,7 +285,7 @@ func _build_post(i: int) -> void:
 		door.rotation.y = d * PI / 2.0
 		door.position = Vector3(sin(d * PI / 2.0), 0, cos(d * PI / 2.0)) * (CAPTURE_RADIUS + 1.3) + Vector3(0, 0.65, 0)
 		csg.add_child(door)
-	add_child(csg)
+	nav_region.add_child(csg)
 	# Capture ring (visual)
 	var ring := MeshInstance3D.new()
 	var rm := CylinderMesh.new()
@@ -632,7 +661,9 @@ func on_mission_end(win: bool, credits: int, k: int) -> void:
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 	hud.show_end(win, credits, k)
 	if Game.test_mode == "smoke":
-		Game.finish_test(win, "SMOKE win=%s credits=%d kills=%d total_credits=%d" % [win, credits, k, Game.save["credits"]])
+		var plen := nav_path_length(LZ, POSTS[0])
+		print("[test] nav polys=%d path_points LZ->ALPHA=%d" % [nav_polys, plen])
+		Game.finish_test(win and nav_polys > 0 and plen >= 2, "SMOKE win=%s credits=%d kills=%d total_credits=%d" % [win, credits, k, Game.save["credits"]])
 	elif Game.test_mode == "smokefail":
 		Game.finish_test(not win, "SMOKEFAIL win=%s credits=%d kills=%d" % [win, credits, k])
 

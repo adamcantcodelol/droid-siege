@@ -23,6 +23,8 @@ var strafe_dir := 1.0
 var strafe_t := 0.0
 var net_pos := Vector3.ZERO
 var net_rot := 0.0
+var agent: NavigationAgent3D
+var repath := 0.0
 
 var model: Node3D
 var ball: MeshInstance3D
@@ -52,6 +54,13 @@ func _ready() -> void:
 	cs.position.y = cap.height / 2.0
 	add_child(cs)
 	_build_model()
+	if multiplayer.is_server():
+		agent = NavigationAgent3D.new()
+		agent.radius = cap.radius
+		agent.height = cap.height
+		agent.path_desired_distance = 1.0
+		agent.target_desired_distance = 1.5
+		add_child(agent)
 	net_pos = position
 	net_rot = rotation.y
 
@@ -177,6 +186,7 @@ func server_tick(delta: float, world) -> void:
 		deployed = not want_move
 	var dir := to.normalized() if dist > 0.01 else Vector3.ZERO
 	if want_move:
+		dir = _nav_dir(delta, target.global_position, dir)
 		velocity.x = dir.x * speed
 		velocity.z = dir.z * speed
 	elif etype == 0:
@@ -199,6 +209,22 @@ func server_tick(delta: float, world) -> void:
 		fire_cd = stats["rof"] * randf_range(0.8, 1.3)
 		world.enemy_fire(self, target, dist)
 	_update_visual(delta)
+
+
+func _nav_dir(delta: float, goal: Vector3, fallback: Vector3) -> Vector3:
+	if agent == null:
+		return fallback
+	repath -= delta
+	if repath <= 0.0:
+		repath = 0.5
+		agent.target_position = goal
+	if agent.is_navigation_finished():
+		return fallback
+	var nxt := agent.get_next_path_position() - global_position
+	nxt.y = 0.0
+	if nxt.length() < 0.05:
+		return fallback
+	return nxt.normalized()
 
 
 ## Returns true if the hit came from the shielded front of a deployed droideka.
