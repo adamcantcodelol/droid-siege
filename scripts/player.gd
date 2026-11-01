@@ -329,7 +329,7 @@ func _throw_grenade() -> void:
 	Game.net_all("grenade_fx", [pos, vel], false)
 
 
-func take_damage(dmg: float) -> void:
+func take_damage(dmg: float, from = null) -> void:
 	if god or state != 0 or not is_local:
 		return
 	health -= dmg
@@ -337,12 +337,15 @@ func take_damage(dmg: float) -> void:
 	Game.play_sfx("hurt", null, -6.0)
 	if Game.world.hud != null:
 		Game.world.hud.damage_flash()
+		if from is Vector3:
+			Game.world.hud.damage_from(from)
 	if health <= 0.0:
 		health = 0.0
 		state = 1
 		bleed = BLEED_TIME
 		reloading = 0.0
 		Game.play_sfx("down")
+		Game.world.hud.add_feed("%s is DOWN!" % display_name, Color(1, 0.4, 0.3))
 		Game.world.show_message("You're down! Hold on, a squadmate can revive you (E).")
 
 

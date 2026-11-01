@@ -22,6 +22,11 @@ var wait_label: Label
 var sens_slider: HSlider
 var msg_time := 0.0
 var hit_time := 0.0
+var feed_box: VBoxContainer
+var dmg_ind: Control
+var dmg_poly: Polygon2D
+var dmg_from := Vector3.ZERO
+var dmg_time := 0.0
 
 
 func _ready() -> void:
@@ -81,6 +86,22 @@ func _ready() -> void:
 	down_label.size = Vector2(800, 100)
 	down_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	down_label.add_theme_color_override("font_color", Color(1, 0.35, 0.3))
+
+	feed_box = VBoxContainer.new()
+	feed_box.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	feed_box.position = Vector2(-380, 150)
+	feed_box.custom_minimum_size = Vector2(360, 0)
+	feed_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	root.add_child(feed_box)
+
+	dmg_ind = Control.new()
+	dmg_ind.set_anchors_preset(Control.PRESET_CENTER)
+	dmg_ind.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	root.add_child(dmg_ind)
+	dmg_poly = Polygon2D.new()
+	dmg_poly.polygon = PackedVector2Array([Vector2(-26, -95), Vector2(26, -95), Vector2(0, -125)])
+	dmg_poly.color = Color(1, 0.15, 0.1, 0.0)
+	dmg_ind.add_child(dmg_poly)
 
 	_build_pause(root)
 	_build_end(root)
@@ -203,6 +224,32 @@ func hit_marker(shielded: bool) -> void:
 	Game.play_sfx("hit", null, -10.0)
 
 
+func add_feed(text: String, color: Color = Color.WHITE) -> void:
+	if feed_box == null:
+		return
+	var l := Label.new()
+	l.text = text
+	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	l.add_theme_font_size_override("font_size", 16)
+	l.add_theme_constant_override("outline_size", 5)
+	l.add_theme_color_override("font_outline_color", Color.BLACK)
+	l.add_theme_color_override("font_color", color)
+	feed_box.add_child(l)
+	while feed_box.get_child_count() > 6:
+		var old := feed_box.get_child(0)
+		feed_box.remove_child(old)
+		old.queue_free()
+	var tw := l.create_tween()
+	tw.tween_interval(5.0)
+	tw.tween_property(l, "modulate:a", 0.0, 0.8)
+	tw.tween_callback(l.queue_free)
+
+
+func damage_from(pos: Vector3) -> void:
+	dmg_from = pos
+	dmg_time = 1.2
+
+
 func damage_flash() -> void:
 	flash.color.a = 0.35
 
@@ -226,6 +273,15 @@ func _process(delta: float) -> void:
 	if hit_time <= 0.0:
 		cross.remove_theme_color_override("font_color")
 	flash.color.a = maxf(0.0, flash.color.a - delta * 0.8)
+	dmg_time -= delta
+	var lpi = world.local_player()
+	if dmg_time > 0.0 and lpi != null:
+		var to: Vector3 = dmg_from - lpi.global_position
+		var fwd: Vector3 = -lpi.global_transform.basis.z
+		dmg_ind.rotation = Vector2(fwd.x, fwd.z).angle_to(Vector2(to.x, to.z))
+		dmg_poly.color.a = clampf(dmg_time, 0.0, 0.85)
+	else:
+		dmg_poly.color.a = 0.0
 
 	# Objective
 	var lp = world.local_player()

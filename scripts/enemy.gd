@@ -3,7 +3,7 @@ extends CharacterBody3D
 
 const STATE_SIZE := 9  # id, type, x, y, z, rot_y, hp, shield, deployed
 const TYPES := {
-	0: {"name": "B1 Battle Droid", "hp": 60.0, "speed": 3.4, "range": 26.0, "dmg": 6.0, "rof": 1.3, "acc": 0.45, "credits": 10, "shield": 0.0},
+	0: {"name": "B1 Battle Droid", "hp": 60.0, "speed": 3.4, "range": 26.0, "dmg": 6.0, "rof": 1.3, "acc": 0.4, "credits": 10, "shield": 0.0},
 	1: {"name": "B2 Super Droid", "hp": 240.0, "speed": 2.3, "range": 22.0, "dmg": 9.0, "rof": 0.55, "acc": 0.4, "credits": 25, "shield": 0.0},
 	2: {"name": "Droideka", "hp": 130.0, "speed": 7.0, "range": 20.0, "dmg": 7.0, "rof": 0.35, "acc": 0.35, "credits": 40, "shield": 220.0},
 }

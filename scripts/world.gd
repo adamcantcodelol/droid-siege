@@ -400,7 +400,10 @@ func apply_player_state(pid: int, pos: Vector3, ry: float, pitch: float, hp: flo
 	if not players.has(pid) and Game.players.has(pid):
 		_add_player(pid, players.size())
 	if players.has(pid):
+		var prev: int = players[pid].state
 		players[pid].net_update(pos, ry, pitch, hp, st)
+		if prev == 0 and st == 1 and hud != null:
+			hud.add_feed("%s is DOWN! Revive them (E)" % players[pid].display_name, Color(1, 0.4, 0.3))
 		remote_state_packets += 1
 
 
@@ -472,7 +475,7 @@ func _server_tick(delta: float) -> void:
 			if _flat_dist(e.global_position, center) < CAPTURE_RADIUS:
 				ein += 1
 		if pin > 0 and ein <= pin:
-			progress += delta * (0.045 + 0.02 * (pin - 1)) * test_speed
+			progress += delta * (0.05 + 0.018 * (pin - 1)) * test_speed
 		elif pin == 0:
 			progress = maxf(0.0, progress - delta * 0.01)
 		if progress >= 1.0:
@@ -592,17 +595,18 @@ func enemy_fire(e, target, dist: float) -> void:
 			to = res["position"]
 	Game.net_all("bolt_fx", [from, to, 1])
 	if hit:
-		Game.net_peer(target.peer_id, "hit_player", [float(e.stats["dmg"])])
+		var solo := 0.8 if players.size() == 1 else 1.0
+		Game.net_peer(target.peer_id, "hit_player", [float(e.stats["dmg"]) * solo, from])
 
 
-func damage_enemy(eid: int, dmg: float, from: Vector3, _shooter: int, explosive: bool) -> void:
+func damage_enemy(eid: int, dmg: float, from: Vector3, shooter: int, explosive: bool) -> void:
 	if not enemies.has(eid) or ended:
 		return
 	var e = enemies[eid]
 	if e.apply_damage(dmg, from, explosive):
 		kills += 1
 		earned += int(round(float(e.stats["credits"]) * float(DIFF["credits"])))
-		Game.net_all("enemy_died", [eid, e.global_position])
+		Game.net_all("enemy_died", [eid, e.global_position, shooter, e.etype])
 
 
 func explode(pos: Vector3, shooter: int) -> void:
@@ -642,11 +646,41 @@ func apply_enemy_states(data: PackedFloat32Array) -> void:
 			enemies.erase(id)
 
 
-func on_enemy_died(eid: int, pos: Vector3) -> void:
+func on_enemy_died(eid: int, pos: Vector3, killer: int = 0, etype: int = 0) -> void:
 	if enemies.has(eid):
 		enemies[eid].queue_free()
 		enemies.erase(eid)
 	spawn_explosion(pos + Vector3(0, 1, 0), 0.5)
+	_spawn_debris(pos + Vector3(0, 1, 0), etype)
+	var kname := "Squad"
+	if Game.players.has(killer):
+		kname = str(Game.players[killer]["name"])
+	if hud != null:
+		hud.add_feed("%s  >  %s" % [kname, EnemyScript.TYPES[etype]["name"]],
+			Color(0.5, 0.8, 1.0) if killer == multiplayer.get_unique_id() else Color(0.9, 0.9, 0.9))
+
+
+func _spawn_debris(pos: Vector3, etype: int) -> void:
+	var col: Color = [Color(0.78, 0.68, 0.48), Color(0.3, 0.33, 0.4), Color(0.55, 0.4, 0.25)][clampi(etype, 0, 2)]
+	for i in 7:
+		var mi := MeshInstance3D.new()
+		var bm := BoxMesh.new()
+		bm.size = Vector3(randf_range(0.1, 0.3), randf_range(0.1, 0.3), randf_range(0.1, 0.4))
+		var m := StandardMaterial3D.new()
+		m.albedo_color = col
+		bm.material = m
+		mi.mesh = bm
+		fx_root.add_child(mi)
+		mi.global_position = pos
+		var dest := pos + Vector3(randf_range(-2.5, 2.5), randf_range(-0.9, 1.5), randf_range(-2.5, 2.5))
+		dest.y = maxf(dest.y, 0.1)
+		var tw := mi.create_tween()
+		tw.set_parallel(true)
+		tw.tween_property(mi, "global_position", dest, 0.5).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_QUAD)
+		tw.tween_property(mi, "rotation", Vector3(randf() * 6, randf() * 6, randf() * 6), 0.5)
+		tw.chain().tween_interval(2.0)
+		tw.chain().tween_property(mi, "scale", Vector3.ZERO, 0.4)
+		tw.chain().tween_callback(mi.queue_free)
 
 
 func apply_objective(ph: int, prog: float, t: float, k: int, ne: int, e: int) -> void:
@@ -676,9 +710,11 @@ func on_mission_end(win: bool, credits: int, k: int) -> void:
 	if Game.test_mode in ["smoke", "smoke2"]:
 		var plen := nav_path_length(LZ, POSTS[0])
 		print("[test] map=%s diff=%s nav polys=%d path_points LZ->ALPHA=%d" % [M["name"], DIFF["name"], nav_polys, plen])
-		Game.finish_test(win and nav_polys > 0 and plen >= 2, "SMOKE win=%s credits=%d kills=%d total_credits=%d" % [win, credits, k, Game.save["credits"]])
+		print("[test] kill feed entries=%d" % hud.feed_box.get_child_count())
+		Game.finish_test(win and nav_polys > 0 and plen >= 2 and hud.feed_box.get_child_count() > 0, "SMOKE win=%s credits=%d kills=%d total_credits=%d" % [win, credits, k, Game.save["credits"]])
 	elif Game.test_mode == "smokefail":
-		Game.finish_test(not win, "SMOKEFAIL win=%s credits=%d kills=%d" % [win, credits, k])
+		print("[test] damage indicator active=%s" % (hud.dmg_time > 0.0))
+		Game.finish_test(not win and hud.dmg_time > 0.0, "SMOKEFAIL win=%s credits=%d kills=%d" % [win, credits, k])
 
 
 # ------------------------------------------------------------------ fx
@@ -688,7 +724,29 @@ func spawn_bolt(from: Vector3, to: Vector3, kind: int) -> void:
 	b.to = to
 	b.kind = kind
 	fx_root.add_child(b)
+	_muzzle_flash(from, kind)
 	Game.play_sfx("blaster" if kind == 0 else "enemy_blaster", from, -4.0 if kind == 0 else -8.0)
+
+
+func _muzzle_flash(pos: Vector3, kind: int) -> void:
+	var c := Color(0.5, 0.75, 1.0) if kind == 0 else Color(1.0, 0.35, 0.2)
+	var l := OmniLight3D.new()
+	l.light_color = c
+	l.light_energy = 2.5
+	l.omni_range = 4.0
+	var mi := MeshInstance3D.new()
+	var sm := SphereMesh.new()
+	sm.radius = 0.12
+	sm.height = 0.24
+	var m := StandardMaterial3D.new()
+	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	m.albedo_color = c
+	sm.material = m
+	mi.mesh = sm
+	l.add_child(mi)
+	fx_root.add_child(l)
+	l.global_position = pos
+	get_tree().create_timer(0.06).timeout.connect(l.queue_free)
 
 
 func spawn_grenade(pos: Vector3, vel: Vector3, owned: bool) -> void:
@@ -782,4 +840,4 @@ func _test_autopilot(delta: float) -> void:
 		if test_elapsed > 2.0 and test_elapsed < 2.0 + delta * 1.5:
 			explode(lp.global_position + Vector3(0, 0, -3), 1)
 	elif Game.test_mode == "smokefail" and test_elapsed > 3.0 and lp.state == 0:
-		lp.take_damage(99999.0)
+		lp.take_damage(99999.0, lp.global_position + Vector3(5, 0, 0))

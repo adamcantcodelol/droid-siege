@@ -454,17 +454,17 @@ func enemy_states(data: PackedFloat32Array) -> void:
 
 
 @rpc("authority", "call_remote", "reliable")
-func enemy_died(eid: int, pos: Vector3) -> void:
+func enemy_died(eid: int, pos: Vector3, killer: int, etype: int) -> void:
 	if world != null:
-		world.on_enemy_died(eid, pos)
+		world.on_enemy_died(eid, pos, killer, etype)
 
 
 @rpc("authority", "call_remote", "reliable")
-func hit_player(dmg: float) -> void:
+func hit_player(dmg: float, from: Vector3) -> void:
 	if world != null:
 		var lp = world.local_player()
 		if lp != null:
-			lp.take_damage(dmg)
+			lp.take_damage(dmg, from)
 
 
 @rpc("any_peer", "call_remote", "reliable")
@@ -516,6 +516,7 @@ func _start_test() -> void:
 		"shot":
 			await get_tree().create_timer(2.5).timeout
 			await _save_shot("/tmp/ds_menu.png")
+			settings = {"map": 1, "diff": 1}
 			start_singleplayer()
 			await get_tree().create_timer(9.0).timeout
 			_save_shot("/tmp/ds_game.png")
