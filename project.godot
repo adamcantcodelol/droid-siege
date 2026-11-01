@@ -1,0 +1,24 @@
+; Droid Siege - Godot 4 project
+config_version=5
+
+[application]
+config/name="Droid Siege"
+config/description="Co-op clone trooper shooter (1-4 players)"
+run/main_scene="res://scenes/main_menu.tscn"
+config/features=PackedStringArray("4.7", "Forward Plus")
+config/icon="res://icon.svg"
+
+[autoload]
+Game="*res://scripts/game.gd"
+
+[display]
+window/size/viewport_width=1280
+window/size/viewport_height=720
+window/stretch/mode="canvas_items"
+window/stretch/aspect="expand"
+
+[physics]
+common/physics_ticks_per_second=60
+
+[rendering]
+rendering_device/fallback_to_opengl3=true
