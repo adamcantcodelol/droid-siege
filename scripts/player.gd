@@ -70,7 +70,10 @@ func _ready() -> void:
 		add_child(pivot)
 		spring = SpringArm3D.new()
 		spring.spring_length = 3.2
-		spring.margin = 0.2
+		spring.margin = 0.3
+		var probe := SphereShape3D.new()
+		probe.radius = 0.35
+		spring.shape = probe  # sphere sweep keeps the near plane out of walls
 		spring.position = Vector3(0.75, 0.1, 0)
 		spring.collision_mask = 1
 		spring.add_excluded_object(get_rid())
@@ -78,6 +81,7 @@ func _ready() -> void:
 		cam = Camera3D.new()
 		cam.fov = 75.0
 		cam.far = 400.0
+		cam.near = 0.05
 		spring.add_child(cam)
 		cam.current = true
 	else:
