@@ -128,6 +128,21 @@ func _build_main(holder: Control) -> Control:
 	name_edit.max_length = 16
 	name_edit.text_changed.connect(func(t): Game.player_name = t if t.strip_edges() != "" else "Trooper")
 	box.add_child(name_edit)
+	var row := HBoxContainer.new()
+	box.add_child(row)
+	var map_opt := OptionButton.new()
+	map_opt.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	for m in Game.MAPS:
+		map_opt.add_item("Map: " + m["name"])
+	map_opt.selected = int(Game.settings["map"])
+	map_opt.item_selected.connect(func(i): Game.settings["map"] = i; Game.write_save())
+	row.add_child(map_opt)
+	var diff_opt := OptionButton.new()
+	for d in Game.DIFFICULTIES:
+		diff_opt.add_item(d["name"])
+	diff_opt.selected = int(Game.settings["diff"])
+	diff_opt.item_selected.connect(func(i): Game.settings["diff"] = i; Game.write_save())
+	row.add_child(diff_opt)
 	_btn(box, "Singleplayer Mission", func(): Game.write_save(); Game.start_singleplayer())
 	_btn(box, "Multiplayer (Host / Join)", func(): _show("mp"))
 	_btn(box, "Armory (Upgrades & Grenades)", func(): _show("shop"))
@@ -267,6 +282,6 @@ func _refresh_lobby() -> void:
 		for a in IP.get_local_addresses():
 			if a.count(".") == 3 and not a.begins_with("127.") and not a.begins_with("169.254"):
 				ips.append(a + ("  (Tailscale)" if a.begins_with("100.") else ""))
-		lobby_info.text = "Your IP addresses (share one):\n%s\nPort %s. Press Start when your squad is in." % ["\n".join(ips), port_edit.text]
+		lobby_info.text = "Your IP addresses (share one):\n%s\nPort %s. Map and difficulty come from your main menu choice. Late joiners drop in at the landing zone. Press Start when your squad is in." % ["\n".join(ips), port_edit.text]
 	else:
 		lobby_info.text = "Waiting for the host to start the mission..."

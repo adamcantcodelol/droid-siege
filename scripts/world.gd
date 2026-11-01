@@ -8,9 +8,11 @@ const BoltScript = preload("res://scripts/bolt.gd")
 const GrenadeScript = preload("res://scripts/grenade.gd")
 const HudScript = preload("res://scripts/hud.gd")
 
-const POSTS := [Vector3(0, 0, -30), Vector3(50, 0, 10), Vector3(-45, 0, 35)]
+var M: Dictionary = {}
+var DIFF: Dictionary = {}
+var POSTS: Array = []
 const POST_NAMES := ["ALPHA", "BRAVO", "CHARLIE"]
-const LZ := Vector3(0, 0, 72)
+var LZ := Vector3(0, 0, 72)
 const CAPTURE_RADIUS := 7.0
 const EXTRACT_TIME := 120.0
 const MAP_HALF := 95.0
@@ -52,7 +54,11 @@ var server_enemy_count_max := 0
 func _ready() -> void:
 	Game.world = self
 	rng.seed = Game.mission_seed
-	if Game.test_mode in ["smoke", "smokefail"]:
+	M = Game.MAPS[clampi(int(Game.settings["map"]), 0, Game.MAPS.size() - 1)]
+	DIFF = Game.DIFFICULTIES[clampi(int(Game.settings["diff"]), 0, Game.DIFFICULTIES.size() - 1)]
+	POSTS = M["posts"]
+	LZ = M["lz"]
+	if Game.test_mode in ["smoke", "smoke2", "smokefail"]:
 		test_speed = 4.0
 		Engine.time_scale = 3.0
 	players_root = _child_node("Players")
@@ -76,7 +82,7 @@ func _ready() -> void:
 		on_peer_ready(1)
 	else:
 		Game.rpc_id(1, "client_world_ready")
-	show_message("Squad deployed! Head for Command Post ALPHA.")
+	show_message("%s (%s): squad deployed! Head for Command Post ALPHA." % [M["name"], DIFF["name"]])
 
 
 func _exit_tree() -> void:
@@ -165,32 +171,32 @@ func _build_level() -> void:
 	env.background_mode = Environment.BG_SKY
 	var sky := Sky.new()
 	var sm := ProceduralSkyMaterial.new()
-	sm.sky_top_color = Color(0.55, 0.35, 0.22)
-	sm.sky_horizon_color = Color(0.95, 0.7, 0.45)
+	sm.sky_top_color = M["sky_top"]
+	sm.sky_horizon_color = M["sky_hor"]
 	sm.ground_horizon_color = Color(0.8, 0.55, 0.35)
 	sm.ground_bottom_color = Color(0.35, 0.22, 0.14)
 	sky.sky_material = sm
 	env.sky = sky
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
-	env.ambient_light_energy = 0.8
+	env.ambient_light_energy = M["ambient"]
 	env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
 	env.fog_enabled = true
-	env.fog_light_color = Color(0.85, 0.6, 0.4)
-	env.fog_density = 0.006
+	env.fog_light_color = M["fog"]
+	env.fog_density = M["fog_density"]
 	env.glow_enabled = true
 	var we := WorldEnvironment.new()
 	we.environment = env
 	add_child(we)
 	var sun := DirectionalLight3D.new()
 	sun.rotation_degrees = Vector3(-50, 35, 0)
-	sun.light_color = Color(1.0, 0.9, 0.75)
-	sun.light_energy = 1.2
+	sun.light_color = M["sun"]
+	sun.light_energy = M["sun_energy"]
 	sun.shadow_enabled = true
 	sun.directional_shadow_max_distance = 120.0
 	add_child(sun)
 
 	# Ground
-	var g := _add_box(Vector3(0, -0.5, 0), Vector3(240, 1, 240), Color(0.76, 0.55, 0.36))
+	var g := _add_box(Vector3(0, -0.5, 0), Vector3(240, 1, 240), M["ground"])
 	g.name = "Ground"
 	# Boundary cliffs
 	for i in 4:
@@ -198,11 +204,11 @@ func _build_level() -> void:
 		var s := 1.0 if i % 2 == 0 else -1.0
 		var pos := Vector3(0, 6, s * (MAP_HALF + 6)) if horizontal else Vector3(s * (MAP_HALF + 6), 6, 0)
 		var size := Vector3(220, 12, 8) if horizontal else Vector3(8, 12, 220)
-		_add_box(pos, size, Color(0.55, 0.36, 0.24))
+		_add_box(pos, size, M["cliff"])
 	# Random rock cover (deterministic from mission seed so all peers match)
 	var placed := 0
 	var tries := 0
-	while placed < 70 and tries < 600:
+	while placed < int(M["rocks"]) and tries < 600:
 		tries += 1
 		var p := Vector3(rng.randf_range(-MAP_HALF + 5, MAP_HALF - 5), 0, rng.randf_range(-MAP_HALF + 5, MAP_HALF - 5))
 		var blocked := p.distance_to(LZ) < 14.0
@@ -213,8 +219,9 @@ func _build_level() -> void:
 			continue
 		placed += 1
 		var shade := rng.randf_range(0.8, 1.1)
-		var col := Color(0.6 * shade, 0.42 * shade, 0.3 * shade)
-		if rng.randf() < 0.35:
+		var rc: Color = M["rock"]
+		var col := Color(rc.r * shade, rc.g * shade, rc.b * shade)
+		if rng.randf() < float(M["pillar_ratio"]):
 			_add_pillar(p, rng.randf_range(1.0, 2.5), rng.randf_range(4.0, 14.0), col)
 		else:
 			var sz := Vector3(rng.randf_range(1.5, 6.0), rng.randf_range(1.2, 3.0), rng.randf_range(1.0, 3.0))
@@ -470,7 +477,7 @@ func _server_tick(delta: float) -> void:
 			progress = maxf(0.0, progress - delta * 0.01)
 		if progress >= 1.0:
 			progress = 0.0
-			earned += 150
+			earned += int(150 * float(DIFF["credits"]))
 			phase += 1
 			if phase == 3:
 				timer = EXTRACT_TIME
@@ -481,7 +488,7 @@ func _server_tick(delta: float) -> void:
 		timer -= delta * test_speed
 		if timer <= 0.0:
 			timer = 0.0
-			earned += 500
+			earned += int(500 * float(DIFF["credits"]))
 			_end_mission(true)
 			return
 
@@ -491,10 +498,10 @@ func _server_tick(delta: float) -> void:
 
 	# Waves
 	var n := players.size()
-	var cap := 4 + phase * 2 + 2 * (n - 1)
+	var cap := 4 + phase * 2 + 2 * (n - 1) + int(DIFF["cap"])
 	var interval := 3.5 - phase * 0.5
 	if phase == 3:
-		cap = 10 + 3 * (n - 1)
+		cap = 10 + 3 * (n - 1) + int(DIFF["cap"])
 		interval = 1.6
 	spawn_cd -= delta
 	if spawn_cd <= 0.0 and enemies.size() < cap:
@@ -594,7 +601,7 @@ func damage_enemy(eid: int, dmg: float, from: Vector3, _shooter: int, explosive:
 	var e = enemies[eid]
 	if e.apply_damage(dmg, from, explosive):
 		kills += 1
-		earned += int(e.stats["credits"])
+		earned += int(round(float(e.stats["credits"]) * float(DIFF["credits"])))
 		Game.net_all("enemy_died", [eid, e.global_position])
 
 
@@ -666,9 +673,9 @@ func on_mission_end(win: bool, credits: int, k: int) -> void:
 	Game.write_save()
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 	hud.show_end(win, credits, k)
-	if Game.test_mode == "smoke":
+	if Game.test_mode in ["smoke", "smoke2"]:
 		var plen := nav_path_length(LZ, POSTS[0])
-		print("[test] nav polys=%d path_points LZ->ALPHA=%d" % [nav_polys, plen])
+		print("[test] map=%s diff=%s nav polys=%d path_points LZ->ALPHA=%d" % [M["name"], DIFF["name"], nav_polys, plen])
 		Game.finish_test(win and nav_polys > 0 and plen >= 2, "SMOKE win=%s credits=%d kills=%d total_credits=%d" % [win, credits, k, Game.save["credits"]])
 	elif Game.test_mode == "smokefail":
 		Game.finish_test(not win, "SMOKEFAIL win=%s credits=%d kills=%d" % [win, credits, k])
@@ -755,13 +762,13 @@ func _update_visuals(delta: float) -> void:
 
 # ------------------------------------------------------------------ headless test autopilot
 func _test_autopilot(delta: float) -> void:
-	if Game.test_mode not in ["smoke", "smokefail"]:
+	if Game.test_mode not in ["smoke", "smoke2", "smokefail"]:
 		return
 	test_elapsed += delta
 	var lp = local_player()
 	if lp == null:
 		return
-	if Game.test_mode == "smoke":
+	if Game.test_mode in ["smoke", "smoke2"]:
 		lp.god = true
 		if phase < 3:
 			lp.global_position = POSTS[phase] + Vector3(1, 0.5, 1)

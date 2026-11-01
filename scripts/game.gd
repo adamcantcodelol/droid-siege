@@ -17,6 +17,24 @@ const UPGRADES := {
 	"armor": {"label": "Armor Plating", "desc": "+25 max health"},
 }
 
+var MAPS: Array = [
+	{"name": "Geonosis Outpost", "posts": [Vector3(0, 0, -30), Vector3(50, 0, 10), Vector3(-45, 0, 35)],
+		"lz": Vector3(0, 0, 72), "ground": Color(0.76, 0.55, 0.36), "cliff": Color(0.55, 0.36, 0.24),
+		"rock": Color(0.6, 0.42, 0.3), "sky_top": Color(0.55, 0.35, 0.22), "sky_hor": Color(0.95, 0.7, 0.45),
+		"fog": Color(0.85, 0.6, 0.4), "fog_density": 0.006, "sun": Color(1.0, 0.9, 0.75), "sun_energy": 1.2,
+		"ambient": 0.8, "rocks": 70, "pillar_ratio": 0.35},
+	{"name": "Felucia Night Raid", "posts": [Vector3(-50, 0, -40), Vector3(40, 0, -45), Vector3(10, 0, 20)],
+		"lz": Vector3(60, 0, 70), "ground": Color(0.2, 0.33, 0.22), "cliff": Color(0.18, 0.22, 0.2),
+		"rock": Color(0.42, 0.28, 0.52), "sky_top": Color(0.03, 0.06, 0.12), "sky_hor": Color(0.15, 0.3, 0.3),
+		"fog": Color(0.15, 0.3, 0.28), "fog_density": 0.014, "sun": Color(0.6, 0.75, 1.0), "sun_energy": 0.45,
+		"ambient": 0.6, "rocks": 95, "pillar_ratio": 0.7},
+]
+var DIFFICULTIES: Array = [
+	{"name": "Recruit", "hp": 0.75, "dmg": 0.6, "cap": -1, "credits": 0.75},
+	{"name": "Veteran", "hp": 1.0, "dmg": 1.0, "cap": 0, "credits": 1.0},
+	{"name": "Commando", "hp": 1.3, "dmg": 1.4, "cap": 3, "credits": 1.5},
+]
+
 signal lobby_changed
 signal net_status(msg: String)
 
@@ -26,6 +44,7 @@ var players := {}          # peer_id -> {"name": String}
 var online := false
 var in_mission := false
 var mission_seed := 1
+var settings := {"map": 0, "diff": 1}
 var world: Node = null
 var test_mode := ""
 var sounds := {}
@@ -90,7 +109,7 @@ func _bind(action: String, keys: Array, mouse_button: int = 0) -> void:
 # ---------------------------------------------------------------- save / upgrades
 func default_save() -> Dictionary:
 	return {"credits": 0, "dmg": 0, "rate": 0, "mag": 0, "armor": 0, "grenades": 2,
-		"missions": 0, "wins": 0, "name": "Trooper", "sens": 0.0025}
+		"missions": 0, "wins": 0, "name": "Trooper", "sens": 0.0025, "map": 0, "diff": 1}
 
 
 func load_save() -> void:
@@ -106,12 +125,15 @@ func load_save() -> void:
 	for k in ["credits", "dmg", "rate", "mag", "armor", "grenades", "missions", "wins"]:
 		save[k] = int(save[k])
 	player_name = str(save["name"])
+	settings = {"map": int(save["map"]), "diff": int(save["diff"])}
 	mouse_sensitivity = float(save["sens"])
 
 
 func write_save() -> void:
 	save["name"] = player_name
 	save["sens"] = mouse_sensitivity
+	save["map"] = int(settings["map"])
+	save["diff"] = int(settings["diff"])
 	var f := FileAccess.open(SAVE_PATH, FileAccess.WRITE)
 	if f:
 		f.store_string(JSON.stringify(save, "\t"))
@@ -257,7 +279,7 @@ func start_mission() -> void:
 	if not multiplayer.is_server():
 		return
 	write_save()
-	net_all("rpc_start_mission", [players, randi()])
+	net_all("rpc_start_mission", [players, randi(), settings])
 
 
 func return_to_menu(message: String = "") -> void:
@@ -357,7 +379,7 @@ func register_player(pname: String) -> void:
 	_broadcast_lobby()
 	if in_mission:
 		# Drop-in: send the late joiner straight into the running mission.
-		rpc_id(id, "rpc_start_mission", players, mission_seed)
+		rpc_id(id, "rpc_start_mission", players, mission_seed, settings)
 		if world != null:
 			world.sync_players()
 			world.ready_peers[id] = true
@@ -373,8 +395,9 @@ func sync_lobby(p: Dictionary) -> void:
 
 
 @rpc("authority", "call_remote", "reliable")
-func rpc_start_mission(p: Dictionary, mseed: int) -> void:
+func rpc_start_mission(p: Dictionary, mseed: int, sett: Dictionary) -> void:
 	players = p
+	settings = sett
 	mission_seed = mseed
 	in_mission = true
 	get_tree().paused = false
@@ -476,8 +499,9 @@ func mission_end(win: bool, credits: int, kills: int) -> void:
 # ---------------------------------------------------------------- headless test harness
 func _start_test() -> void:
 	match test_mode:
-		"smoke", "smokefail":
+		"smoke", "smoke2", "smokefail":
 			player_name = "SmokeTester"
+			settings = {"map": 1, "diff": 2} if test_mode == "smoke2" else {"map": 0, "diff": 1}
 			start_singleplayer()
 		"server", "server_late":
 			player_name = "TestHost"
@@ -537,7 +561,7 @@ func _process(_delta: float) -> void:
 				_test_done = true
 				print("[test] CLIENT FAIL timeout world=%s" % [world != null])
 				get_tree().quit(1)
-		"smoke", "smokefail":
+		"smoke", "smoke2", "smokefail":
 			if elapsed > 150.0:
 				_test_done = true
 				print("[test] SMOKE FAIL timeout phase=", world.phase if world else -1)

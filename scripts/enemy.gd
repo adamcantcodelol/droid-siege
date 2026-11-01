@@ -39,7 +39,10 @@ func get_enemy_id() -> int:
 
 
 func _ready() -> void:
-	stats = TYPES[etype]
+	stats = TYPES[etype].duplicate()
+	if Game.world != null:
+		stats["hp"] = float(stats["hp"]) * float(Game.world.DIFF["hp"])
+		stats["dmg"] = float(stats["dmg"]) * float(Game.world.DIFF["dmg"])
 	hp = stats["hp"]
 	max_shield = stats["shield"]
 	shield = max_shield
