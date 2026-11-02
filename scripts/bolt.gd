@@ -24,7 +24,7 @@ func _ready() -> void:
 	bm.size = Vector3(0.07, 0.07, 1.4)
 	var m := StandardMaterial3D.new()
 	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	var c := Color(0.35, 0.65, 1.0) if kind == 0 else Color(1.0, 0.2, 0.15)
+	var c := Color(0.35, 0.65, 1.0) if kind != 1 else Color(1.0, 0.2, 0.15)
 	m.albedo_color = c
 	m.emission_enabled = true
 	m.emission = c

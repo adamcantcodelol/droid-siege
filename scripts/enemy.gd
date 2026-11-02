@@ -5,6 +5,7 @@ const STATE_SIZE := 9  # id, type, x, y, z, rot_y, hp, shield, deployed
 const TYPES := {
 	0: {"name": "B1 Battle Droid", "hp": 60.0, "speed": 3.4, "range": 26.0, "dmg": 6.0, "rof": 1.3, "acc": 0.4, "credits": 10, "shield": 0.0},
 	1: {"name": "B2 Super Droid", "hp": 240.0, "speed": 2.3, "range": 22.0, "dmg": 9.0, "rof": 0.55, "acc": 0.4, "credits": 25, "shield": 0.0},
+	3: {"name": "OOM Commander", "hp": 170.0, "speed": 2.8, "range": 30.0, "dmg": 7.0, "rof": 0.9, "acc": 0.45, "credits": 50, "shield": 0.0},
 	2: {"name": "Droideka", "hp": 130.0, "speed": 7.0, "range": 20.0, "dmg": 7.0, "rof": 0.35, "acc": 0.35, "credits": 40, "shield": 220.0},
 }
 
@@ -32,6 +33,18 @@ var shield_mesh: MeshInstance3D
 var shield_mat: StandardMaterial3D
 var muzzle: Node3D
 var hp_label: Label3D
+var char_model = null
+var shot_t := 0.0
+var buffed := false
+var dead := false
+var aura: MeshInstance3D
+var _last_pos := Vector3.ZERO
+var _speed := 0.0
+const CharModel = preload("res://scripts/char_model.gd")
+const ROBOT_ANIMS := {"_raw_h": 4.62, "idle": "RobotArmature|Robot_Idle", "run": "RobotArmature|Robot_Walking",
+	"shoot": "RobotArmature|Robot_Idle", "death": "RobotArmature|Robot_Death"}
+const MECH_ANIMS := {"_raw_h": 7.71, "idle": "CharacterArmature|Idle", "run": "CharacterArmature|Walk",
+	"shoot": "CharacterArmature|Shoot", "death": "CharacterArmature|Death"}
 
 
 func get_enemy_id() -> int:
@@ -51,8 +64,8 @@ func _ready() -> void:
 	collision_mask = 1 | 4
 	var cs := CollisionShape3D.new()
 	var cap := CapsuleShape3D.new()
-	cap.radius = [0.4, 0.6, 0.7][etype]
-	cap.height = [1.9, 2.0, 1.6][etype]
+	cap.radius = [0.4, 0.6, 0.7, 0.4][etype]
+	cap.height = [1.9, 2.2, 1.6, 2.0][etype]
 	cs.shape = cap
 	cs.position.y = cap.height / 2.0
 	add_child(cs)
@@ -92,26 +105,39 @@ func _build_model() -> void:
 	add_child(model)
 	muzzle = Node3D.new()
 	match etype:
-		0:  # B1: skinny tan droid with long head
-			var tan := Color(0.78, 0.68, 0.48)
-			_box(Vector3(0.38, 0.5, 0.22), Vector3(0, 1.3, 0), tan)
-			_box(Vector3(0.12, 0.6, 0.1), Vector3(0, 1.75, 0), tan)
-			_box(Vector3(0.16, 0.14, 0.45), Vector3(0, 2.05, -0.12), tan)
-			_box(Vector3(0.08, 0.9, 0.08), Vector3(-0.12, 0.5, 0), tan)
-			_box(Vector3(0.08, 0.9, 0.08), Vector3(0.12, 0.5, 0), tan)
-			_box(Vector3(0.07, 0.07, 0.6), Vector3(0.22, 1.3, -0.3), tan)
-			_box(Vector3(0.06, 0.1, 0.55), Vector3(0.22, 1.3, -0.5), Color(0.15, 0.15, 0.15))
-			muzzle.position = Vector3(0.22, 1.3, -0.8)
+		0:  # B1: tan battle droid
+			char_model = CharModel.new()
+			char_model.setup("res://models/robot.glb", 1.95, {"Main": Color(0.78, 0.68, 0.48), "Grey": Color(0.55, 0.48, 0.34)}, ROBOT_ANIMS)
+			model.add_child(char_model)
+			_box(Vector3(0.07, 0.1, 0.6), Vector3(0.3, 1.15, -0.35), Color(0.15, 0.15, 0.15))
+			muzzle.position = Vector3(0.3, 1.15, -0.7)
 		1:  # B2: bulky gunmetal super droid
-			var steel := Color(0.3, 0.33, 0.4)
-			_box(Vector3(0.9, 0.8, 0.55), Vector3(0, 1.4, 0), steel)
-			_box(Vector3(0.3, 0.2, 0.3), Vector3(0, 1.9, 0.05), steel)
-			_box(Vector3(0.25, 1.0, 0.3), Vector3(-0.25, 0.5, 0), steel)
-			_box(Vector3(0.25, 1.0, 0.3), Vector3(0.25, 0.5, 0), steel)
-			_box(Vector3(0.25, 0.25, 0.8), Vector3(-0.6, 1.35, -0.25), steel)
-			_box(Vector3(0.25, 0.25, 0.8), Vector3(0.6, 1.35, -0.25), steel)
-			_box(Vector3(0.12, 0.12, 0.2), Vector3(0, 1.92, -0.12), Color(1, 0.3, 0.1))
-			muzzle.position = Vector3(0.6, 1.35, -0.7)
+			char_model = CharModel.new()
+			char_model.setup("res://models/robot_large.glb", 2.3, {"Main": Color(0.3, 0.34, 0.42), "Main2": Color(0.24, 0.26, 0.32), "Edge": Color(0.45, 0.48, 0.55)}, MECH_ANIMS)
+			model.add_child(char_model)
+			muzzle.position = Vector3(0.0, 1.3, -1.0)
+		3:  # OOM commander: yellow-marked droid that buffs nearby droids
+			char_model = CharModel.new()
+			char_model.setup("res://models/robot.glb", 2.05, {"Main": Color(0.92, 0.75, 0.2), "Grey": Color(0.85, 0.82, 0.75)}, ROBOT_ANIMS)
+			model.add_child(char_model)
+			_box(Vector3(0.07, 0.1, 0.5), Vector3(0.3, 1.2, -0.3), Color(0.15, 0.15, 0.15))
+			muzzle.position = Vector3(0.3, 1.2, -0.6)
+			aura = MeshInstance3D.new()
+			var cm := CylinderMesh.new()
+			cm.top_radius = 12.0
+			cm.bottom_radius = 12.0
+			cm.height = 0.03
+			cm.radial_segments = 32
+			cm.rings = 1
+			var am := StandardMaterial3D.new()
+			am.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+			am.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+			am.albedo_color = Color(1.0, 0.8, 0.2, 0.12)
+			cm.material = am
+			aura.mesh = cm
+			aura.position.y = 0.06
+			aura.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+			add_child(aura)
 		2:  # Droideka: rolls as a ball, deploys with a shield
 			var bronze := Color(0.55, 0.4, 0.25)
 			_box(Vector3(0.6, 0.5, 0.7), Vector3(0, 1.0, 0), bronze)
@@ -146,6 +172,8 @@ func _build_model() -> void:
 	model.add_child(muzzle)
 	if etype != 0:
 		hp_label = Label3D.new()
+		if etype == 3:
+			hp_label.modulate = Color(1, 0.85, 0.3)
 		hp_label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 		hp_label.font_size = 40
 		hp_label.outline_size = 8
@@ -165,6 +193,7 @@ func server_tick(delta: float, world) -> void:
 	if retarget <= 0.0 or target == null or not is_instance_valid(target) or target.state != 0:
 		target = world.nearest_alive_player(global_position)
 		retarget = 1.0
+		buffed = etype != 3 and world.commander_near(global_position)
 	if not is_on_floor():
 		velocity.y -= 14.0 * delta
 	else:
@@ -183,7 +212,7 @@ func server_tick(delta: float, world) -> void:
 	var dist := to.length()
 	var eye := global_position + Vector3(0, 1.5, 0)
 	var los: bool = world.has_los(eye, target.global_position + Vector3(0, 1.2, 0))
-	var want_move: bool = dist > stats["range"] * 0.7 or not los
+	var want_move: bool = dist > stats["range"] * (0.85 if etype == 3 else 0.7) or not los
 	var speed: float = stats["speed"]
 	if etype == 2:
 		deployed = not want_move
@@ -209,7 +238,7 @@ func server_tick(delta: float, world) -> void:
 	move_and_slide()
 	fire_cd -= delta
 	if los and dist < stats["range"] and fire_cd <= 0.0 and (etype != 2 or deployed):
-		fire_cd = stats["rof"] * randf_range(0.8, 1.3)
+		fire_cd = stats["rof"] * randf_range(0.8, 1.3) * (0.7 if buffed else 1.0)
 		world.enemy_fire(self, target, dist)
 	_update_visual(delta)
 
@@ -272,6 +301,17 @@ func _physics_process(delta: float) -> void:
 
 
 func _update_visual(_delta: float) -> void:
+	if char_model != null and not dead:
+		var flat := global_position - _last_pos
+		flat.y = 0.0
+		_last_pos = global_position
+		if _delta > 0.0:
+			_speed = lerpf(_speed, flat.length() / _delta, minf(1.0, _delta * 8.0))
+		shot_t -= _delta
+		if _speed > 0.5:
+			char_model.play("run", clampf(_speed / float(stats["speed"]), 0.6, 1.6))
+		else:
+			char_model.play("shoot" if shot_t > 0.0 else "idle")
 	if etype == 2:
 		model.visible = deployed
 		ball.visible = not deployed
@@ -284,3 +324,22 @@ func _update_visual(_delta: float) -> void:
 		if etype == 2 and deployed:
 			t += "  SH %d" % int(shield)
 		hp_label.text = t
+
+
+## Play the death animation, drop collision, then free (used instead of an instant despawn).
+func die() -> void:
+	if dead:
+		return
+	dead = true
+	set_physics_process(false)
+	collision_layer = 0
+	collision_mask = 0
+	if hp_label != null:
+		hp_label.visible = false
+	if aura != null:
+		aura.visible = false
+	if char_model == null:
+		queue_free()
+		return
+	char_model.play("death")
+	get_tree().create_timer(2.2).timeout.connect(queue_free)

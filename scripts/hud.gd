@@ -418,7 +418,7 @@ func _process(delta: float) -> void:
 	var ammo := "%d / %d" % [lp.mag, lp.mag_size]
 	if lp.reloading > 0.0:
 		ammo = "RELOADING..."
-	ammo_label.text = "DC-15 BLASTER\n%s\nGrenades: %d" % [ammo, lp.grenades]
+	ammo_label.text = "%s  [%d/2]\n%s\nGrenades: %d" % [lp.WEAPON_NAMES[lp.weapon], lp.weapon + 1, ammo, lp.grenades]
 
 	if lp.state == 1:
 		down_label.text = "YOU ARE DOWN\nBleeding out in %ds - a squadmate can revive you" % int(ceil(lp.bleed))

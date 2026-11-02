@@ -148,6 +148,16 @@ func build_control_options(box: Control) -> void:
 	af.toggled.connect(func(on): auto_fire = on; write_save())
 	extra.add_child(af)
 	extra.visible = control_mode == 1
+	var ml := Label.new()
+	ml.text = "Music volume"
+	box.add_child(ml)
+	var ms := HSlider.new()
+	ms.min_value = 0.0
+	ms.max_value = 1.0
+	ms.step = 0.05
+	ms.value = float(save.get("music", 0.6))
+	ms.value_changed.connect(func(v): save["music"] = v; _apply_music_volume(); write_save())
+	box.add_child(ms)
 	opt.item_selected.connect(func(i): control_mode = i; extra.visible = i == 1; write_save())
 
 
@@ -175,6 +185,9 @@ func _setup_input() -> void:
 	_bind("interact", [KEY_E])
 	_bind("pause", [KEY_ESCAPE])
 	_bind("scoreboard", [KEY_TAB])
+	_bind("weapon1", [KEY_1])
+	_bind("weapon2", [KEY_2])
+	_bind("weapon_next", [KEY_X, KEY_C])
 	_bind("fire", [], MOUSE_BUTTON_LEFT)
 	_bind("aim", [], MOUSE_BUTTON_RIGHT)
 
@@ -195,7 +208,7 @@ func _bind(action: String, keys: Array, mouse_button: int = 0) -> void:
 # ---------------------------------------------------------------- save / upgrades
 func default_save() -> Dictionary:
 	return {"credits": 0, "dmg": 0, "rate": 0, "mag": 0, "armor": 0, "grenades": 2,
-		"missions": 0, "wins": 0, "name": "Trooper", "sens": 0.0025, "map": 0, "diff": 1, "controls": 0, "turn_speed": 2.6, "auto_fire": false, "aim_assist": true, "ws_url": "", "relay_url": "", "mode": 0}
+		"missions": 0, "wins": 0, "name": "Trooper", "sens": 0.0025, "map": 0, "diff": 1, "controls": 0, "turn_speed": 2.6, "auto_fire": false, "aim_assist": true, "ws_url": "", "relay_url": "", "mode": 0, "music": 0.6, "quality": -1}
 
 
 func load_save() -> void:
@@ -275,6 +288,34 @@ func max_health() -> float:
 	return 100.0 + 25.0 * int(save["armor"])
 
 
+# ---------------------------------------------------------------- music
+var _music: AudioStreamPlayer
+var _music_name := ""
+
+
+func play_music(mname: String) -> void:
+	if is_headless() or mname == _music_name:
+		return
+	_music_name = mname
+	if _music == null:
+		_music = AudioStreamPlayer.new()
+		add_child(_music)
+	var st = load("res://audio/%s.ogg" % mname)
+	if st is AudioStreamOggVorbis:
+		st.loop = true
+	_music.stream = st
+	_apply_music_volume()
+	_music.play()
+
+
+func _apply_music_volume() -> void:
+	if _music == null:
+		return
+	var v := float(save.get("music", 0.6))
+	_music.volume_db = linear_to_db(maxf(v, 0.0001)) - 8.0
+	_music.stream_paused = v <= 0.01
+
+
 # ---------------------------------------------------------------- sounds (generated tones)
 func _make_sounds() -> void:
 	sounds = {
@@ -286,6 +327,10 @@ func _make_sounds() -> void:
 		"down": _tone(420.0, 90.0, 0.7, 0.5, 0.1),
 		"reload": _tone(300.0, 520.0, 0.15, 0.3, 0.3),
 		"hurt": _tone(220.0, 160.0, 0.12, 0.4, 0.5),
+		"scatter": _tone(700.0, 90.0, 0.32, 0.6, 0.55),
+		"switch": _tone(900.0, 1300.0, 0.06, 0.25, 0.2),
+		"kill": _tone(1200.0, 1800.0, 0.09, 0.25, 0.0),
+		"step": _tone(140.0, 90.0, 0.05, 0.18, 0.7),
 	}
 
 
@@ -760,7 +805,7 @@ func mission_end(win: bool, credits: int, kills: int) -> void:
 # ---------------------------------------------------------------- headless test harness
 func _start_test() -> void:
 	match test_mode:
-		"smoke", "smoke2", "smokefail", "walkcap", "kbtest":
+		"smoke", "smoke2", "smokefail", "walkcap", "kbtest", "weapons":
 			player_name = "SmokeTester"
 			control_mode = 1 if test_mode == "kbtest" else 0
 			aim_assist = true
@@ -883,9 +928,16 @@ func _process(_delta: float) -> void:
 			if world != null and world.enemy_state_packets > 30 and world.players.size() == 2 \
 					and world.enemies.size() > 0 and world.remote_state_packets > 10:
 				_test_done = true
-				print("[test] CLIENT OK: players=%d enemies=%d enemy_packets=%d player_packets=%d phase=%d" % [
+				var host = world.players.get(1)
+				var e0 = world.enemies.values()[0]
+				var anim_ok: bool = host != null and host.state == 0 and host.char_model != null and host.char_model.cur != "" \
+					and e0.char_model != null and e0.char_model.cur != ""
+				print("[test] CLIENT OK: players=%d enemies=%d enemy_packets=%d player_packets=%d phase=%d host_state=%d host_anim=%s droid_anim=%s" % [
 					world.players.size(), world.enemies.size(), world.enemy_state_packets,
-					world.remote_state_packets, world.phase])
+					world.remote_state_packets, world.phase, host.state if host else -1,
+					host.char_model.cur if host and host.char_model else "none", e0.char_model.cur if e0.char_model else "none"])
+				if not anim_ok:
+					print("[test] CLIENT FAIL animation sync")
 				# shoot one bolt request at an enemy to exercise client->server damage
 				var eid: int = world.enemies.keys()[0]
 				net_server("req_damage", [eid, 5.0, Vector3.ZERO])

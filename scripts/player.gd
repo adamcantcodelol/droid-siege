@@ -46,6 +46,8 @@ var pivot: Node3D
 var spring: SpringArm3D
 var cam: Camera3D
 var model: Node3D
+var char_model = null
+const CharModel = preload("res://scripts/char_model.gd")
 var muzzle: Node3D
 var name_label: Label3D
 
@@ -122,36 +124,71 @@ func _box(size: Vector3) -> BoxMesh:
 	return b
 
 
+const WEAPON_MESHES := ["Sniper", "SMG", "RocketLauncher", "Revolver", "Revolver_Small", "Pistol", "GrenadeLauncher", "ShortCannon", "Shotgun", "Sniper_2", "Shovel", "Knife_2", "Knife_1", "AK"]
+const WEAPON_SHOW := [["AK"], ["Shotgun"]]
+const SOLDIER_ANIMS := {"_raw_h": 2.26, "idle": "CharacterArmature|Idle", "aim": "CharacterArmature|Idle_Shoot",
+	"run": "CharacterArmature|Run", "run_shoot": "CharacterArmature|Run_Gun", "jump": "CharacterArmature|Jump_Idle",
+	"death": "CharacterArmature|Death", "hit": "CharacterArmature|HitReact"}
+
+const WEAPON_NAMES := ["DC-15A RIFLE", "DP-23 SCATTER"]
+const SHOTGUN_MAG := 6
+const SHOTGUN_PELLETS := 8
+const SHOTGUN_RANGE := 30.0
+var weapon := 0
+var stored_mag := [0, SHOTGUN_MAG]
+var anim_flags := 0          # bit0 firing, bit1 aiming, bit2 sprint, bit3 airborne, bit4 weapon slot
+var shot_t := 0.0
+var _last_pos := Vector3.ZERO
+var _speed := 0.0
+var _shown_weapon := -1
+
+
 func _build_model() -> void:
 	model = Node3D.new()
 	add_child(model)
-	var white := Color(0.92, 0.92, 0.9)
+	var armor := Color(0.92, 0.92, 0.9)
 	var accent: Color = SQUAD_COLORS[color_index % 4]
 	if Game.world != null and Game.world.versus and not Game.world.ffa:
 		accent = Color(0.9, 0.15, 0.12) if team == 0 else Color(0.15, 0.4, 1.0)
-		white = Color(1.0, 0.82, 0.8) if team == 0 else Color(0.8, 0.86, 1.0)
-	var dark := Color(0.12, 0.12, 0.14)
-	var torso := CapsuleMesh.new()
-	torso.radius = 0.3
-	torso.height = 1.0
-	_part(torso, Vector3(0, 1.15, 0), white, model)
-	_part(_box(Vector3(0.62, 0.12, 0.42)), Vector3(0, 0.75, 0), dark, model)          # belt
-	_part(_box(Vector3(0.22, 0.75, 0.24)), Vector3(-0.15, 0.37, 0), white, model)     # legs
-	_part(_box(Vector3(0.22, 0.75, 0.24)), Vector3(0.15, 0.37, 0), white, model)
-	_part(_box(Vector3(0.45, 0.5, 0.2)), Vector3(0, 1.2, 0.3), Color(0.8, 0.8, 0.78), model)  # backpack
-	var head := SphereMesh.new()
-	head.radius = 0.22
-	head.height = 0.46
-	_part(head, Vector3(0, 1.75, 0), white, model)
-	_part(_box(Vector3(0.34, 0.07, 0.1)), Vector3(0, 1.78, -0.19), dark, model)        # visor T
-	_part(_box(Vector3(0.08, 0.18, 0.1)), Vector3(0, 1.68, -0.19), dark, model)
-	_part(_box(Vector3(0.06, 0.3, 0.46)), Vector3(0, 1.85, 0), accent, model)          # helmet stripe
-	_part(_box(Vector3(0.18, 0.18, 0.5)), Vector3(-0.38, 1.25, 0), accent, model)      # shoulder pauldron
-	_part(_box(Vector3(0.12, 0.6, 0.12)), Vector3(0.38, 1.15, -0.1), white, model)     # arm
-	_part(_box(Vector3(0.1, 0.16, 0.75)), Vector3(0.28, 1.25, -0.45), dark, model)     # blaster
+		armor = Color(1.0, 0.78, 0.75) if team == 0 else Color(0.78, 0.85, 1.0)
+	var body = CharModel.new()
+	body.name = "Body"
+	body.setup("res://models/soldier.glb", 1.85, {
+		"Character_Main": armor, "Pants": armor.darkened(0.08), "Skin": Color(0.12, 0.12, 0.14),
+		"Grey": accent, "Red": accent, "Wood": Color(0.15, 0.15, 0.17), "DarkWood": Color(0.1, 0.1, 0.12)},
+		SOLDIER_ANIMS, WEAPON_MESHES, WEAPON_SHOW[0])
+	model.add_child(body)
+	char_model = body
+	_shown_weapon = 0
 	muzzle = Node3D.new()
 	muzzle.position = Vector3(0.28, 1.27, -0.85)
 	model.add_child(muzzle)
+
+
+func _update_anim(delta: float) -> void:
+	if char_model == null:
+		return
+	var flat := global_position - _last_pos
+	flat.y = 0.0
+	_last_pos = global_position
+	if delta > 0.0:
+		_speed = lerpf(_speed, flat.length() / delta, minf(1.0, delta * 10.0))
+	shot_t -= delta
+	var w := (anim_flags >> 4) & 1
+	if w != _shown_weapon:
+		_shown_weapon = w
+		char_model.set_visible_meshes(WEAPON_MESHES, WEAPON_SHOW[w])
+	if state != 0:
+		char_model.play("death")
+		return
+	var firing := (anim_flags & 1) != 0 or shot_t > 0.0
+	var aiming := (anim_flags & 2) != 0
+	if (anim_flags & 8) != 0:
+		char_model.play("jump")
+	elif _speed > 0.6:
+		char_model.play("run_shoot" if (firing or aiming) else "run", clampf(_speed / SPEED, 0.6, 1.5))
+	else:
+		char_model.play("aim" if (firing or aiming) else "idle")
 
 
 # ------------------------------------------------------------------ input
@@ -163,6 +200,9 @@ func _unhandled_input(event: InputEvent) -> void:
 		rotation.y -= event.relative.x * sens
 		pitch = clampf(pitch - event.relative.y * sens, -1.2, 1.0)
 		pivot.rotation.x = pitch
+	elif event is InputEventMouseButton and event.pressed and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED \
+			and event.button_index in [MOUSE_BUTTON_WHEEL_UP, MOUSE_BUTTON_WHEEL_DOWN]:
+		switch_weapon(1 - weapon)
 	elif event is InputEventMouseButton and event.pressed and Input.mouse_mode != Input.MOUSE_MODE_CAPTURED:
 		var w = Game.world
 		if w != null and w.hud != null and not w.hud.is_blocking():
@@ -247,6 +287,12 @@ func _physics_process(delta: float) -> void:
 			_start_reload()
 		if Input.is_action_just_pressed("grenade"):
 			_throw_grenade()
+		if Input.is_action_just_pressed("weapon1"):
+			switch_weapon(0)
+		elif Input.is_action_just_pressed("weapon2"):
+			switch_weapon(1)
+		elif Input.is_action_just_pressed("weapon_next"):
+			switch_weapon(1 - weapon)
 
 	# Health
 	if state == 0 and since_hit > 5.0 and health < max_health:
@@ -267,7 +313,8 @@ func _physics_process(delta: float) -> void:
 	sync_cd -= delta
 	if sync_cd <= 0.0:
 		sync_cd = 0.05
-		Game.net_all("player_state", [position, rotation.y, pitch, health, state], false)
+		anim_flags = (1 if shot_t > 0.0 else 0) | (2 if is_aiming else 0) | (4 if is_sprinting else 0) | (8 if not is_on_floor() else 0) | (weapon << 4)
+		Game.net_all("player_state", [position, rotation.y, pitch, health, state | (anim_flags << 2)], false)
 
 
 ## Keyboard / trackpad camera: arrows or J/L turn, I/K look, plus light aim assist.
@@ -358,12 +405,13 @@ func _handle_revive(delta: float, act: bool) -> void:
 func _update_pose(delta: float) -> void:
 	var target_rot := 0.0
 	var target_y := 0.0
-	if state != 0:
+	if state != 0 and char_model == null:
 		target_rot = -PI / 2.0
 		target_y = 0.3
 	model.rotation.x = lerp_angle(model.rotation.x, target_rot, minf(1.0, delta * 6.0))
 	model.position.y = lerpf(model.position.y, target_y, minf(1.0, delta * 6.0))
-	model.visible = state != 2 or is_local
+	model.visible = true
+	_update_anim(delta)
 	if name_label != null:
 		name_label.text = display_name + ("  [DOWNED - hold E]" if state == 1 else ("  [KIA]" if state == 2 else ""))
 
@@ -381,6 +429,10 @@ func _aim_point() -> Dictionary:
 
 
 func _shoot() -> void:
+	shot_t = 0.3
+	if weapon == 1:
+		_shoot_scatter()
+		return
 	fire_cd = Game.fire_interval()
 	mag -= 1
 	var aim := _aim_point()
@@ -400,10 +452,60 @@ func _shoot() -> void:
 		_start_reload()
 
 
+## Swap between the rifle (slot 1) and the scatter blaster (slot 2); each keeps its own magazine.
+func switch_weapon(w: int) -> void:
+	if w == weapon or state != 0:
+		return
+	stored_mag[weapon] = mag
+	weapon = w
+	mag_size = Game.mag_size() if w == 0 else SHOTGUN_MAG
+	mag = stored_mag[w]
+	reloading = 0.0
+	fire_cd = maxf(fire_cd, 0.35)
+	Game.play_sfx("switch")
+	anim_flags = (anim_flags & ~16) | (w << 4)
+
+
+## Scatter blaster: 8 pellets in a cone, damage aggregated per target into one request each.
+func _shoot_scatter() -> void:
+	fire_cd = 0.85 * pow(0.92, int(Game.save["rate"]))
+	mag -= 1
+	var origin := cam.global_position if cam != null else global_position + Vector3(0, 1.6, 0)
+	var basis := cam.global_transform.basis if cam != null else global_transform.basis
+	var spread := 0.03 if is_aiming else 0.05
+	var per := Game.weapon_damage() * 0.45
+	var totals := {}
+	var space := get_world_3d().direct_space_state
+	for i in SHOTGUN_PELLETS:
+		var d := (-basis.z + basis.x * randf_range(-spread, spread) + basis.y * randf_range(-spread, spread)).normalized()
+		var q := PhysicsRayQueryParameters3D.create(origin, origin + d * SHOTGUN_RANGE, _shot_mask(), [get_rid()])
+		var res := space.intersect_ray(q)
+		var to: Vector3 = origin + d * SHOTGUN_RANGE if res.is_empty() else res["position"]
+		if i % 2 == 0:
+			Game.world.spawn_bolt(muzzle.global_position, to, 2)
+			Game.net_all("bolt_fx", [muzzle.global_position, to, 2], false)
+		if not res.is_empty() and res["collider"] != null:
+			var c = res["collider"]
+			var falloff := clampf(1.25 - origin.distance_to(to) / SHOTGUN_RANGE, 0.35, 1.0)
+			totals[c] = totals.get(c, 0.0) + per * falloff
+	for c in totals:
+		if not is_instance_valid(c):
+			continue
+		if c.has_method("get_peer_id"):
+			if Game.world.is_hostile(peer_id, c.get_peer_id()):
+				Game.net_server("req_pvp_damage", [c.get_peer_id(), totals[c], global_position])
+				Game.world.hud.hit_marker(false)
+		elif c.has_method("get_enemy_id"):
+			Game.net_server("req_damage", [c.get_enemy_id(), totals[c], global_position])
+			Game.world.hud.hit_marker(c.shield_blocks(global_position))
+	if mag <= 0:
+		_start_reload()
+
+
 func _start_reload() -> void:
 	if reloading > 0.0 or mag >= mag_size:
 		return
-	reloading = RELOAD_TIME
+	reloading = RELOAD_TIME * (1.4 if weapon == 1 else 1.0)
 	Game.play_sfx("reload")
 
 
@@ -474,4 +576,5 @@ func net_update(pos: Vector3, ry: float, p: float, hp: float, st: int) -> void:
 	net_rot = ry
 	pitch = p
 	health = hp
-	state = st
+	state = st & 3
+	anim_flags = st >> 2

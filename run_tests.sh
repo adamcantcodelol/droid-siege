@@ -9,6 +9,7 @@ $G --headless --path . -- --test=smoke | grep "\[test\]"
 $G --headless --path . -- --test=smoke2 | grep "\[test\]"
 $G --headless --path . -- --test=walkcap | grep "\[test\]"
 $G --headless --path . -- --test=kbtest | grep "\[test\]"
+$G --headless --path . -- --test=weapons | grep "\[test\]"
 for m in 0 1 2; do $G --headless --path . -- --test=mapcheck$m | grep "\[test\] \(OK\|FAIL\|mapcheck\)"; done
 $G --headless --path . -- --test=smokefail | grep "\[test\]"
 $G --headless --path . -- --test=server > /tmp/ds_server.log 2>&1 &

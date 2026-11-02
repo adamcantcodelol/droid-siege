@@ -79,7 +79,7 @@ func _ready() -> void:
 	ffa = int(Game.settings.get("mode", 0)) == 2
 	pvp_target = 10 if ffa else 15
 	LZ = M["lz"]
-	if Game.test_mode in ["smoke", "smoke2", "smokefail", "walkcap", "kbtest"]:
+	if Game.test_mode in ["smoke", "smoke2", "smokefail", "walkcap", "kbtest", "weapons"]:
 		test_speed = 4.0
 		Engine.time_scale = 3.0
 	players_root = _child_node("Players")
@@ -97,6 +97,7 @@ func _ready() -> void:
 		_add_player(multiplayer.get_unique_id(), players.size())
 	hud = HudScript.new()
 	add_child(hud)
+	Game.play_music("battle")
 	if not Game.is_headless():
 		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 	if multiplayer.is_server():
@@ -380,6 +381,7 @@ func apply_player_state(pid: int, pos: Vector3, ry: float, pitch: float, hp: flo
 	if players.has(pid):
 		var prev: int = players[pid].state
 		players[pid].net_update(pos, ry, pitch, hp, st)
+		st = st & 3
 		if prev == 0 and st == 1 and hud != null:
 			hud.add_feed("%s is DOWN! Revive them (E)" % players[pid].display_name, Color(1, 0.4, 0.3))
 		remote_state_packets += 1
@@ -551,8 +553,24 @@ func _flat_dist(a: Vector3, b: Vector3) -> float:
 	return Vector2(a.x - b.x, a.z - b.z).length()
 
 
+## True if an OOM commander is within 12 m (its buff: +43% fire rate, +25% damage).
+func commander_near(pos: Vector3) -> bool:
+	for e in enemies.values():
+		if e.etype == 3 and _flat_dist(e.global_position, pos) < 12.0:
+			return true
+	return false
+
+
 func _pick_type() -> int:
 	var r := rng.randf()
+	if phase >= 1 and r < 0.08:
+		var has_cmd := false
+		for e in enemies.values():
+			if e.etype == 3:
+				has_cmd = true
+		if not has_cmd:
+			return 3
+		r = rng.randf()
 	match phase:
 		0:
 			return 0 if r < 0.85 else 1
@@ -631,7 +649,7 @@ func enemy_fire(e, target, dist: float) -> void:
 	Game.net_all("bolt_fx", [from, to, 1])
 	if hit:
 		var solo := 0.8 if players.size() == 1 else 1.0
-		Game.net_peer(target.peer_id, "hit_player", [float(e.stats["dmg"]) * solo, from])
+		Game.net_peer(target.peer_id, "hit_player", [float(e.stats["dmg"]) * solo * (1.25 if e.buffed else 1.0), from])
 
 
 func damage_enemy(eid: int, dmg: float, from: Vector3, shooter: int, explosive: bool) -> void:
@@ -776,17 +794,19 @@ func apply_enemy_states(data: PackedFloat32Array) -> void:
 		i += stride
 	for id in enemies.keys():
 		if not seen.has(id):
-			enemies[id].queue_free()
+			enemies[id].die()
 			enemies.erase(id)
 
 
 func on_enemy_died(eid: int, pos: Vector3, killer: int = 0, etype: int = 0) -> void:
 	if enemies.has(eid):
-		enemies[eid].queue_free()
+		enemies[eid].die()
 		enemies.erase(eid)
 	spawn_explosion(pos + Vector3(0, 1, 0), 0.5)
 	_spawn_debris(pos + Vector3(0, 1, 0), etype)
 	var kname := "Squad"
+	if killer == multiplayer.get_unique_id():
+		Game.play_sfx("kill", null, -10.0)
 	if Game.players.has(killer):
 		kname = str(Game.players[killer]["name"])
 	if hud != null:
@@ -795,7 +815,7 @@ func on_enemy_died(eid: int, pos: Vector3, killer: int = 0, etype: int = 0) -> v
 
 
 func _spawn_debris(pos: Vector3, etype: int) -> void:
-	var col: Color = [Color(0.78, 0.68, 0.48), Color(0.3, 0.33, 0.4), Color(0.55, 0.4, 0.25)][clampi(etype, 0, 2)]
+	var col: Color = [Color(0.78, 0.68, 0.48), Color(0.3, 0.33, 0.4), Color(0.55, 0.4, 0.25), Color(0.92, 0.75, 0.2)][clampi(etype, 0, 3)]
 	for i in 7:
 		var mi := MeshInstance3D.new()
 		var bm := BoxMesh.new()
@@ -862,11 +882,17 @@ func spawn_bolt(from: Vector3, to: Vector3, kind: int) -> void:
 	b.kind = kind
 	fx_root.add_child(b)
 	_muzzle_flash(from, kind)
-	Game.play_sfx("blaster" if kind == 0 else "enemy_blaster", from, -4.0 if kind == 0 else -8.0)
+	Game.play_sfx(["blaster", "enemy_blaster", "scatter"][clampi(kind, 0, 2)], from, -8.0 if kind == 1 else -4.0)
+	# drive the shooter's firing animation (works for remote players and synced droids alike)
+	var pool: Array = enemies.values() if kind == 1 else players.values()
+	for n in pool:
+		if is_instance_valid(n) and n.global_position.distance_squared_to(from) < 6.0:
+			n.shot_t = 0.35
+			break
 
 
 func _muzzle_flash(pos: Vector3, kind: int) -> void:
-	var c := Color(0.5, 0.75, 1.0) if kind == 0 else Color(1.0, 0.35, 0.2)
+	var c := Color(0.5, 0.75, 1.0) if kind != 1 else Color(1.0, 0.35, 0.2)
 	var l := OmniLight3D.new()
 	l.light_color = c
 	l.light_energy = 2.5
@@ -968,7 +994,7 @@ func _test_autopilot(delta: float) -> void:
 	if Game.test_mode == "pvp_server":
 		_test_pvp_server(delta)
 		return
-	if Game.test_mode not in ["smoke", "smoke2", "smokefail", "walkcap", "kbtest"]:
+	if Game.test_mode not in ["smoke", "smoke2", "smokefail", "walkcap", "kbtest", "weapons"]:
 		return
 	test_elapsed += delta
 	var lp = local_player()
@@ -976,6 +1002,9 @@ func _test_autopilot(delta: float) -> void:
 		return
 	if Game.test_mode == "walkcap":
 		_test_walkcap(delta, lp)
+		return
+	if Game.test_mode == "weapons":
+		_test_weapons(delta, lp)
 		return
 	if Game.test_mode == "kbtest":
 		_test_keyboard(delta, lp)
@@ -1180,3 +1209,53 @@ func _test_mapcheck() -> void:
 			tris += t * n.multimesh.instance_count
 	print("[test] mapcheck %s: nav polys=%d, %d start points, %d multimesh batches, %d prop tris, fails=%s" % [M["name"], nav_polys, starts.size(), mm, tris, fails])
 	Game.finish_test(nav_polys > 100 and fails.is_empty(), "MAPCHECK %s" % M["name"])
+
+
+## Weapon slot 2 (scatter blaster) via the real input action: switch, fire at a B2 8 m ahead,
+## check the shotgun magazine, aggregated pellet damage, the commander buff and the animated models.
+func _test_weapons(_delta: float, lp) -> void:
+	lp.god = true
+	match _t_stage:
+		0:
+			for e in enemies.values().duplicate():
+				damage_enemy(e.eid, 9999.0, Vector3.ZERO, 1, false)
+			spawn_cd = 999.0
+			lp.global_position = Vector3(0, 0.5, LZ.z - 2.0)
+			lp.rotation.y = 0.0
+			lp.pitch = 0.0
+			_t_enemy = _create_enemy(next_enemy_id, 1, lp.global_position + Vector3(0.75, 0, -8))  # on the over-shoulder camera line
+			next_enemy_id += 1
+			_t_enemy.fire_cd = 999.0
+			var cmd = _create_enemy(next_enemy_id, 3, lp.global_position + Vector3(6, 0, -14))
+			next_enemy_id += 1
+			cmd.fire_cd = 999.0
+			Input.action_press("weapon2")
+			_t_mark = test_elapsed
+			_t_stage = 1
+		1:
+			Input.action_release("weapon2")
+			if test_elapsed - _t_mark > 0.6:
+				if lp.weapon != 1 or lp.mag != lp.SHOTGUN_MAG:
+					Game.finish_test(false, "WEAPONS switch weapon=%d mag=%d" % [lp.weapon, lp.mag])
+					return
+				_t_val = _t_enemy.hp
+				Input.action_press("fire")
+				_t_mark = test_elapsed
+				_t_stage = 2
+		2:
+			if test_elapsed - _t_mark > 0.15:
+				Input.action_release("fire")
+			if test_elapsed - _t_mark > 1.2:
+				var dmg: float = _t_val - (_t_enemy.hp if is_instance_valid(_t_enemy) else 0.0)
+				var cm = _t_enemy.char_model if is_instance_valid(_t_enemy) else null
+				var anim_ok: bool = cm != null and cm.ap != null and lp.char_model != null and lp.char_model.ap != null
+				var buff: bool = _t_enemy.buffed if is_instance_valid(_t_enemy) else false
+				print("[test] weapons: scatter mag %d, damage to B2 %.0f, B2 buffed by commander=%s, animated models=%s (player anim '%s')" % [lp.mag, dmg, buff, anim_ok, lp.char_model.cur])
+				_t_stage = 3
+				Input.action_press("weapon1")
+				await get_tree().physics_frame
+				await get_tree().physics_frame
+				Input.action_release("weapon1")
+				print("[test] weapons: back to slot %d mag %d/%d" % [lp.weapon + 1, lp.mag, lp.mag_size])
+				Game.finish_test(lp.weapon == 0 and dmg > 25.0 and buff and anim_ok, "WEAPONS scatter blaster + switching + commander buff")
+				_t_stage = 3
