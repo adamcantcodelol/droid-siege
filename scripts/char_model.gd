@@ -28,6 +28,10 @@ func setup(path: String, height: float, recolor: Dictionary, anim_map: Dictionar
 	for n in inst.find_children("*", "MeshInstance3D", true, false):
 		var mi := n as MeshInstance3D
 		meshes.append(mi)
+		# Skinned rest-pose bounds of these GLBs are tiny/offset (armature scaled x100), so the
+		# renderer can frustum/occlusion-cull a character that is on screen. Never cull them.
+		mi.extra_cull_margin = 16384.0
+		mi.ignore_occlusion_culling = true
 		if mi.name in optional and not (mi.name in show):
 			mi.visible = false
 			continue

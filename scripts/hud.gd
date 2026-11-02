@@ -334,6 +334,7 @@ func show_end(win: bool, credits: int, kills: int) -> void:
 
 
 func _process(delta: float) -> void:
+	_fps_tick()
 	msg_time -= delta
 	msg_label.modulate.a = clampf(msg_time, 0.0, 1.0)
 	hit_time -= delta
@@ -453,3 +454,28 @@ func _direction_text(lp, target: Vector3) -> String:
 	elif ang < -30.0:
 		dir = "to your left"
 	return "Post is %dm %s" % [int(dist), dir]
+
+
+# ---- FPS counter (F3 toggles, on by default)
+var _fps_label: Label
+var _f3_was := false
+
+
+func _fps_tick() -> void:
+	if _fps_label == null:
+		_fps_label = Label.new()
+		_fps_label.set_anchors_and_offsets_preset(Control.PRESET_TOP_RIGHT)
+		_fps_label.offset_left = -110
+		_fps_label.offset_top = 60
+		_fps_label.offset_right = -12
+		_fps_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+		_fps_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_fps_label.add_theme_color_override("font_color", Color(0.6, 1.0, 0.6))
+		_fps_label.add_theme_font_size_override("font_size", 16)
+		add_child(_fps_label)
+	var f3 := Input.is_physical_key_pressed(KEY_F3)
+	if f3 and not _f3_was:
+		_fps_label.visible = not _fps_label.visible
+	_f3_was = f3
+	if _fps_label.visible:
+		_fps_label.text = "%d FPS" % Engine.get_frames_per_second()
