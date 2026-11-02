@@ -24,6 +24,8 @@ var wait_label: Label
 var sens_slider: HSlider
 var msg_time := 0.0
 var hit_time := 0.0
+var score_panel: PanelContainer
+var score_label: Label
 var feed_box: VBoxContainer
 var dmg_ind: Control
 var dmg_poly: Polygon2D
@@ -112,6 +114,13 @@ func _ready() -> void:
 	dmg_poly.polygon = PackedVector2Array([Vector2(-26, -95), Vector2(26, -95), Vector2(0, -125)])
 	dmg_poly.color = Color(1, 0.15, 0.1, 0.0)
 	dmg_ind.add_child(dmg_poly)
+
+	var sr := _panel(root)
+	score_panel = sr[0]
+	score_label = Label.new()
+	score_label.add_theme_font_size_override("font_size", 20)
+	sr[1].add_child(score_label)
+	score_panel.visible = false
 
 	_build_pause(root)
 	_build_end(root)
@@ -277,6 +286,40 @@ func damage_flash() -> void:
 	flash.color.a = 0.35
 
 
+func show_pvp_end(text: String, won: bool, credits: int, kills: int) -> void:
+	pause_panel.visible = false
+	end_panel.visible = true
+	end_title.text = text
+	end_title.add_theme_color_override("font_color", Color(0.4, 0.8, 1.0) if won else Color(1, 0.6, 0.3))
+	end_stats.text = "%s\nYour kills: %d\nCredits earned: %d   (Total: %d)\n\n%s" % [
+		"Victory!" if won else "Defeat - get them next round.", kills, credits, int(Game.save["credits"]), _scoreboard_text()]
+	var can_restart: bool = multiplayer.is_server() or Game.server_is_dedicated
+	again_btn.visible = can_restart
+	wait_label.visible = not can_restart
+
+
+func _scoreboard_text() -> String:
+	var lines := []
+	if world.versus and not world.ffa:
+		lines.append("RED %d  -  %d BLUE      (first to %d)" % [world.team_scores.x, world.team_scores.y, world.pvp_target])
+	else:
+		lines.append("FREE-FOR-ALL      (first to %d kills)" % world.pvp_target)
+	lines.append("")
+	lines.append("%-18s %-6s %5s %5s" % ["TROOPER", "TEAM", "K", "D"])
+	var rows := []
+	for pid in world.players.keys():
+		var sc: Vector2i = world.pvp_scores.get(pid, Vector2i.ZERO)
+		rows.append([sc.x, pid])
+	rows.sort()
+	rows.reverse()
+	for r in rows:
+		var p = world.players[r[1]]
+		var sc2: Vector2i = world.pvp_scores.get(r[1], Vector2i.ZERO)
+		var tn := "-" if world.ffa else ("RED" if p.team == 0 else "BLUE")
+		lines.append("%-18s %-6s %5d %5d" % [p.display_name.substr(0, 18), tn, sc2.x, sc2.y])
+	return "\n".join(PackedStringArray(lines))
+
+
 func show_end(win: bool, credits: int, kills: int) -> void:
 	pause_panel.visible = false
 	end_panel.visible = true
@@ -316,7 +359,21 @@ func _process(delta: float) -> void:
 	var t := ""
 	cap_label.text = ""
 	cap_bar.visible = false
-	if world.phase < 3:
+	score_panel.visible = world.versus and Input.is_action_pressed("scoreboard") and not end_panel.visible
+	if score_panel.visible:
+		score_label.text = _scoreboard_text()
+	if world.versus:
+		var mins := int(maxf(world.pvp_time, 0.0)) / 60
+		var secs := int(maxf(world.pvp_time, 0.0)) % 60
+		if world.ffa:
+			var mine: Vector2i = world.pvp_scores.get(multiplayer.get_unique_id(), Vector2i.ZERO)
+			t = "FREE-FOR-ALL   your kills: %d   first to %d   %d:%02d" % [mine.x, world.pvp_target, mins, secs]
+		else:
+			var my_team := "RED" if lp != null and lp.team == 0 else "BLUE"
+			t = "TEAM DEATHMATCH   RED %d - %d BLUE   first to %d   %d:%02d\nYou are on %s team. Friendly fire is off." % [
+				world.team_scores.x, world.team_scores.y, world.pvp_target, mins, secs, my_team]
+		t += "\nHold Tab for the scoreboard"
+	elif world.phase < 3:
 		t = "OBJECTIVE: Capture all 3 command posts, any order  (%d/3)" % world.phase
 		if lp != null:
 			var zone: int = world.post_at(lp.global_position)
@@ -337,8 +394,9 @@ func _process(delta: float) -> void:
 					_direction_text(lp, world.POSTS[near])]
 	elif world.phase == 3:
 		t = "SURVIVE! Gunship extraction in %ds" % int(ceil(world.timer))
-	t += "\nDroids destroyed: %d    Credits earned: %d    Droids active: %d" % [world.kills, world.earned,
-		world.enemies.size()]
+	if not world.versus:
+		t += "\nDroids destroyed: %d    Credits earned: %d    Droids active: %d" % [world.kills, world.earned,
+			world.enemies.size()]
 	obj_label.text = t
 
 	# Squad
@@ -364,6 +422,8 @@ func _process(delta: float) -> void:
 
 	if lp.state == 1:
 		down_label.text = "YOU ARE DOWN\nBleeding out in %ds - a squadmate can revive you" % int(ceil(lp.bleed))
+	elif lp.state == 2 and world.versus:
+		down_label.text = "ELIMINATED - respawning in %ds" % int(ceil(lp.respawn_t))
 	elif lp.state == 2:
 		down_label.text = "KIA - spectating until the mission ends"
 	else:

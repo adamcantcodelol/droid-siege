@@ -53,7 +53,7 @@ const RelayPeerScript = preload("res://scripts/relay_peer.gd")
 var room_code := ""
 var _pending_relay = null
 var mission_seed := 1
-var settings := {"map": 0, "diff": 1}
+var settings := {"map": 0, "diff": 1, "mode": 0}
 var world: Node = null
 var test_mode := ""
 var sounds := {}
@@ -63,6 +63,7 @@ var control_mode := 0      # 0 = mouse + keyboard, 1 = trackpad / keyboard only
 var turn_speed := 2.6      # radians per second for keyboard turning
 var auto_fire := false
 var aim_assist := true
+const GAME_MODES := ["Co-op: Droid Siege", "Versus: Team Deathmatch", "Versus: Free-for-All"]
 const CONTROL_MODES := ["Mouse + Keyboard", "Trackpad / Keyboard Only"]
 var _test_start_ms := 0
 var _test_done := false
@@ -162,6 +163,7 @@ func _setup_input() -> void:
 	_bind("grenade", [KEY_G])
 	_bind("interact", [KEY_E])
 	_bind("pause", [KEY_ESCAPE])
+	_bind("scoreboard", [KEY_TAB])
 	_bind("fire", [], MOUSE_BUTTON_LEFT)
 	_bind("aim", [], MOUSE_BUTTON_RIGHT)
 
@@ -182,7 +184,7 @@ func _bind(action: String, keys: Array, mouse_button: int = 0) -> void:
 # ---------------------------------------------------------------- save / upgrades
 func default_save() -> Dictionary:
 	return {"credits": 0, "dmg": 0, "rate": 0, "mag": 0, "armor": 0, "grenades": 2,
-		"missions": 0, "wins": 0, "name": "Trooper", "sens": 0.0025, "map": 0, "diff": 1, "controls": 0, "turn_speed": 2.6, "auto_fire": false, "aim_assist": true, "ws_url": "", "relay_url": ""}
+		"missions": 0, "wins": 0, "name": "Trooper", "sens": 0.0025, "map": 0, "diff": 1, "controls": 0, "turn_speed": 2.6, "auto_fire": false, "aim_assist": true, "ws_url": "", "relay_url": "", "mode": 0}
 
 
 func load_save() -> void:
@@ -198,7 +200,7 @@ func load_save() -> void:
 	for k in ["credits", "dmg", "rate", "mag", "armor", "grenades", "missions", "wins"]:
 		save[k] = int(save[k])
 	player_name = str(save["name"])
-	settings = {"map": int(save["map"]), "diff": int(save["diff"])}
+	settings = {"map": int(save["map"]), "diff": int(save["diff"]), "mode": int(save["mode"])}
 	mouse_sensitivity = float(save["sens"])
 	control_mode = int(save["controls"])
 	turn_speed = float(save["turn_speed"])
@@ -215,6 +217,7 @@ func write_save() -> void:
 	save["aim_assist"] = aim_assist
 	save["map"] = int(settings["map"])
 	save["diff"] = int(settings["diff"])
+	save["mode"] = int(settings.get("mode", 0))
 	var f := FileAccess.open(SAVE_PATH, FileAccess.WRITE)
 	if f:
 		f.store_string(JSON.stringify(save, "\t"))
@@ -585,7 +588,7 @@ func request_start(sett: Dictionary) -> void:
 		return
 	if world != null and not world.ended:
 		return
-	settings = {"map": int(sett.get("map", 0)), "diff": int(sett.get("diff", 1))}
+	settings = {"map": int(sett.get("map", 0)), "diff": int(sett.get("diff", 1)), "mode": int(sett.get("mode", 0))}
 	print("[server] mission start requested by %d settings=%s" % [multiplayer.get_remote_sender_id(), settings])
 	start_mission()
 
@@ -680,6 +683,36 @@ func objective_state(ph: int, prog: Vector3, cap_mask: int, con_mask: int, t: fl
 		world.apply_objective(ph, prog, cap_mask, con_mask, t, k, ne, earned)
 
 
+@rpc("any_peer", "call_remote", "reliable")
+func req_pvp_damage(target: int, dmg: float, from: Vector3) -> void:
+	if world != null and multiplayer.is_server():
+		world.pvp_damage(_sender(), target, clampf(dmg, 0.0, 200.0), from)
+
+
+@rpc("any_peer", "call_remote", "reliable")
+func pvp_died() -> void:
+	if world != null and multiplayer.is_server():
+		world.on_pvp_died(_sender())
+
+
+@rpc("authority", "call_remote", "unreliable_ordered")
+func pvp_state(scores: Dictionary, teams: Vector2i, t: float) -> void:
+	if world != null:
+		world.apply_pvp(scores, teams, t)
+
+
+@rpc("authority", "call_remote", "reliable")
+func pvp_end(text: String, win_team: int, win_id: int) -> void:
+	if world != null:
+		world.on_pvp_end(text, win_team, win_id)
+
+
+@rpc("authority", "call_remote", "reliable")
+func feed(text: String) -> void:
+	if world != null and world.hud != null:
+		world.hud.add_feed(text, Color(1, 0.85, 0.5))
+
+
 @rpc("authority", "call_remote", "reliable")
 func announce(text: String) -> void:
 	if world != null:
@@ -699,12 +732,19 @@ func _start_test() -> void:
 			player_name = "SmokeTester"
 			control_mode = 1 if test_mode == "kbtest" else 0
 			aim_assist = true
-			settings = {"map": 1, "diff": 2} if test_mode == "smoke2" else {"map": 0, "diff": 1}
+			settings = {"map": 1, "diff": 2, "mode": 0} if test_mode == "smoke2" else {"map": 0, "diff": 1, "mode": 0}
 			start_singleplayer()
 		"server", "server_late":
 			player_name = "TestHost"
 			var e := host_game(DEFAULT_PORT + 1)
 			print("[test] server hosting on %d err='%s'" % [DEFAULT_PORT + 1, e])
+		"pvp_server":
+			player_name = "RedHost"
+			settings = {"map": 0, "diff": 1, "mode": 1}
+			print("[test] pvp server err='%s'" % host_game(DEFAULT_PORT + 2))
+		"pvp_client":
+			player_name = "BlueClient"
+			print("[test] pvp client err='%s'" % join_game("127.0.0.1", DEFAULT_PORT + 2))
 		"relay_host":
 			player_name = "RelayHost"
 			save["relay_url"] = "ws://127.0.0.1:9081"
@@ -747,6 +787,18 @@ func _process(_delta: float) -> void:
 				var scene := get_tree().current_scene
 				print("[test] MENU OK scene=", scene.name if scene else "none")
 				get_tree().quit(0)
+		"pvp_server":
+			if not in_mission and players.size() >= 2:
+				start_mission()
+			if elapsed > 80.0 and not _test_done:
+				_test_done = true
+				print("[test] PVP SERVER FAIL timeout")
+				get_tree().quit(1)
+		"pvp_client":
+			if elapsed > 80.0 and not _test_done:
+				_test_done = true
+				print("[test] PVP CLIENT FAIL timeout")
+				get_tree().quit(1)
 		"relay_host":
 			if room_code != "" and not FileAccess.file_exists("/tmp/ds_room_code.txt"):
 				var f := FileAccess.open("/tmp/ds_room_code.txt", FileAccess.WRITE)

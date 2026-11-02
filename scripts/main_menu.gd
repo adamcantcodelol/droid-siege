@@ -8,6 +8,7 @@ var port_edit: LineEdit
 var ip_edit: LineEdit
 var ws_edit: LineEdit
 var code_edit: LineEdit
+var mode_opt: OptionButton
 var relay_edit: LineEdit
 var lobby_label: Label
 var lobby_info: Label
@@ -244,6 +245,18 @@ func _build_lobby(holder: Control) -> Control:
 	_lbl(box, "SQUAD LOBBY", 22)
 	lobby_label = _lbl(box, "")
 	lobby_info = _lbl(box, "", 13)
+	var mrow := HBoxContainer.new()
+	box.add_child(mrow)
+	var ml := Label.new()
+	ml.text = "Mode:"
+	mrow.add_child(ml)
+	mode_opt = OptionButton.new()
+	mode_opt.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	for m in Game.GAME_MODES:
+		mode_opt.add_item(m)
+	mode_opt.selected = int(Game.settings.get("mode", 0))
+	mode_opt.item_selected.connect(func(i): Game.settings["mode"] = i; Game.write_save())
+	mrow.add_child(mode_opt)
 	start_btn = _btn(box, "Start Mission", func(): Game.write_save(); Game.start_mission())
 	_btn(box, "Leave", func(): Game.leave_network(); _show("mp"))
 	return box
@@ -361,6 +374,7 @@ func _refresh_lobby() -> void:
 	lobby_label.text = "Troopers (%d/4):\n%s" % [Game.players.size(), t]
 	var is_host: bool = Game.online and multiplayer.is_server()
 	start_btn.visible = is_host or (Game.server_is_dedicated and Game.online)
+	mode_opt.get_parent().visible = start_btn.visible
 	if is_host and Game.room_code != "":
 		lobby_info.text = "ROOM CODE:  %s\nYour friends: Multiplayer > type the code > Join with Code." % Game.room_code
 		lobby_info.add_theme_font_size_override("font_size", 20)

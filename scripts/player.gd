@@ -14,6 +14,8 @@ const SQUAD_COLORS := [Color(1.0, 0.55, 0.1), Color(0.2, 0.45, 1.0), Color(0.95,
 
 var peer_id := 1
 var color_index := 0
+var team := 0
+var respawn_t := 0.0
 var display_name := "Trooper"
 var is_local := false
 var health := 100.0
@@ -96,6 +98,8 @@ func _ready() -> void:
 		name_label.outline_size = 10
 		name_label.pixel_size = 0.01
 		name_label.modulate = SQUAD_COLORS[color_index % 4]
+		if Game.world != null and Game.world.versus and not Game.world.ffa:
+			name_label.modulate = Color(1, 0.35, 0.3) if team == 0 else Color(0.45, 0.65, 1.0)
 		name_label.position = Vector3(0, 2.3, 0)
 		add_child(name_label)
 
@@ -123,6 +127,9 @@ func _build_model() -> void:
 	add_child(model)
 	var white := Color(0.92, 0.92, 0.9)
 	var accent: Color = SQUAD_COLORS[color_index % 4]
+	if Game.world != null and Game.world.versus and not Game.world.ffa:
+		accent = Color(0.9, 0.15, 0.12) if team == 0 else Color(0.15, 0.4, 1.0)
+		white = Color(1.0, 0.82, 0.8) if team == 0 else Color(0.8, 0.86, 1.0)
 	var dark := Color(0.12, 0.12, 0.14)
 	var torso := CapsuleMesh.new()
 	torso.radius = 0.3
@@ -250,6 +257,10 @@ func _physics_process(delta: float) -> void:
 			state = 2
 			Game.world.show_message("You bled out. Your squad must finish the mission!")
 
+	if Game.world.versus and state == 2 and not Game.world.ended:
+		respawn_t -= delta
+		if respawn_t <= 0.0:
+			respawn()
 	_handle_revive(delta, act)
 	_update_pose(delta)
 
@@ -284,7 +295,7 @@ func _assist_target():
 	var best = null
 	var best_ang := deg_to_rad(10.0)
 	var fwd := -cam.global_transform.basis.z
-	for e in Game.world.enemies.values():
+	for e in Game.world.assist_candidates(self):
 		if not is_instance_valid(e):
 			continue
 		var p: Vector3 = e.global_position + Vector3(0, 1.2, 0)
@@ -303,12 +314,22 @@ func _crosshair_enemy():
 		return null
 	var origin := cam.global_position
 	var fwd := -cam.global_transform.basis.z
-	var q := PhysicsRayQueryParameters3D.create(origin, origin + fwd * 120.0, 1 | 4, [get_rid()])
+	var q := PhysicsRayQueryParameters3D.create(origin, origin + fwd * 120.0, _shot_mask(), [get_rid()])
 	var res := get_world_3d().direct_space_state.intersect_ray(q)
 	if res.is_empty():
 		return null
 	var col = res["collider"]
+	if col != null and col.has_method("get_peer_id"):
+		return col if Game.world.is_hostile(peer_id, col.get_peer_id()) and col.state == 0 else null
 	return col if col != null and col.has_method("get_enemy_id") else null
+
+
+func _shot_mask() -> int:
+	return (1 | 4 | 2) if Game.world != null and Game.world.versus else (1 | 4)
+
+
+func get_peer_id() -> int:
+	return peer_id
 
 
 func _handle_revive(delta: float, act: bool) -> void:
@@ -352,7 +373,7 @@ func _aim_point() -> Dictionary:
 	var fwd := -cam.global_transform.basis.z if cam != null else -global_transform.basis.z
 	if not is_aiming:
 		fwd = (fwd + Vector3(randf_range(-1, 1), randf_range(-1, 1), randf_range(-1, 1)) * 0.012).normalized()
-	var q := PhysicsRayQueryParameters3D.create(origin, origin + fwd * 250.0, 1 | 4, [get_rid()])
+	var q := PhysicsRayQueryParameters3D.create(origin, origin + fwd * 250.0, _shot_mask(), [get_rid()])
 	var res := get_world_3d().direct_space_state.intersect_ray(q)
 	if res.is_empty():
 		return {"pos": origin + fwd * 250.0, "collider": null}
@@ -368,7 +389,11 @@ func _shoot() -> void:
 	Game.world.spawn_bolt(from, to, 0)
 	Game.net_all("bolt_fx", [from, to, 0], false)
 	var col = aim["collider"]
-	if col != null and col.has_method("get_enemy_id"):
+	if col != null and col.has_method("get_peer_id"):
+		if Game.world.is_hostile(peer_id, col.get_peer_id()):
+			Game.net_server("req_pvp_damage", [col.get_peer_id(), Game.weapon_damage(), global_position])
+			Game.world.hud.hit_marker(false)
+	elif col != null and col.has_method("get_enemy_id"):
 		Game.net_server("req_damage", [col.get_enemy_id(), Game.weapon_damage(), global_position])
 		Game.world.hud.hit_marker(col.shield_blocks(global_position))
 	if mag <= 0:
@@ -408,6 +433,14 @@ func take_damage(dmg: float, from = null) -> void:
 		Game.world.hud.damage_flash()
 		if from is Vector3:
 			Game.world.hud.damage_from(from)
+	if health <= 0.0 and Game.world.versus:
+		health = 0.0
+		state = 2
+		respawn_t = 5.0
+		reloading = 0.0
+		Game.play_sfx("down")
+		Game.net_server("pvp_died", [])
+		return
 	if health <= 0.0:
 		health = 0.0
 		state = 1
@@ -416,6 +449,15 @@ func take_damage(dmg: float, from = null) -> void:
 		Game.play_sfx("down")
 		Game.world.hud.add_feed("%s is DOWN!" % display_name, Color(1, 0.4, 0.3))
 		Game.world.show_message("You're down! Hold on, a squadmate can revive you (E).")
+
+
+func respawn() -> void:
+	global_position = Game.world.spawn_point(peer_id)
+	velocity = Vector3.ZERO
+	health = max_health
+	state = 0
+	mag = mag_size
+	since_hit = 10.0
 
 
 func revive() -> void:

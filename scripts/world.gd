@@ -47,6 +47,16 @@ var gunship: Node3D
 var nav_region: NavigationRegion3D
 var nav_polys := 0
 var test_speed := 1.0
+var versus := false
+var ffa := false
+var pvp_scores := {}        # peer_id -> Vector2i(kills, deaths)
+var team_scores := Vector2i.ZERO
+var last_attacker := {}
+var pvp_time := 480.0
+var pvp_target := 15
+var pvp_cd := 0.0
+var _pvp_respawns := 0
+var _pvp_saw_dead := false
 var test_cd := 0.0
 var test_elapsed := 0.0
 var enemy_state_packets := 0
@@ -60,6 +70,9 @@ func _ready() -> void:
 	M = Game.MAPS[clampi(int(Game.settings["map"]), 0, Game.MAPS.size() - 1)]
 	DIFF = Game.DIFFICULTIES[clampi(int(Game.settings["diff"]), 0, Game.DIFFICULTIES.size() - 1)]
 	POSTS = M["posts"]
+	versus = int(Game.settings.get("mode", 0)) > 0
+	ffa = int(Game.settings.get("mode", 0)) == 2
+	pvp_target = 10 if ffa else 15
 	LZ = M["lz"]
 	if Game.test_mode in ["smoke", "smoke2", "smokefail", "walkcap", "kbtest"]:
 		test_speed = 4.0
@@ -377,8 +390,56 @@ func _add_player(pid: int, index: int) -> void:
 	p.display_name = str(Game.players[pid]["name"]) if Game.players.has(pid) else "Trooper"
 	p.name = "P%d" % pid
 	p.position = LZ + Vector3((index - 1.5) * 2.5, 1.0, 0)
+	if versus:
+		p.team = index if ffa else _balanced_team()
+		p.position = _spawn_for(p.team, index)
 	players_root.add_child(p)
 	players[pid] = p
+	if not pvp_scores.has(pid):
+		pvp_scores[pid] = Vector2i.ZERO
+
+
+func _balanced_team() -> int:
+	var c := [0, 0]
+	for q in players.values():
+		c[clampi(q.team, 0, 1)] += 1
+	return 0 if c[0] <= c[1] else 1
+
+
+func _spawn_for(team: int, salt: int) -> Vector3:
+	var r := RandomNumberGenerator.new()
+	r.randomize()
+	if not ffa:
+		var base := Vector3(0, 1.0, 78.0 if team == 0 else -78.0)
+		return base + Vector3(r.randf_range(-12, 12) + salt * 0.0, 0, r.randf_range(-3, 3))
+	var ang := r.randf() * TAU
+	return Vector3(cos(ang) * 60.0, 1.0, sin(ang) * 60.0)
+
+
+## Respawn position for a versus player (team spawn or random FFA spot).
+func spawn_point(pid: int) -> Vector3:
+	var p = players.get(pid)
+	return _spawn_for(p.team if p != null else 0, 0)
+
+
+func is_hostile(a: int, b: int) -> bool:
+	if not versus or a == b:
+		return false
+	if ffa:
+		return true
+	var pa = players.get(a)
+	var pb = players.get(b)
+	return pa != null and pb != null and pa.team != pb.team
+
+
+func assist_candidates(me) -> Array:
+	var out: Array = enemies.values()
+	if versus:
+		out = []
+		for p in players.values():
+			if p != me and p.state == 0 and is_hostile(me.peer_id, p.peer_id):
+				out.append(p)
+	return out
 
 
 func sync_players() -> void:
@@ -460,6 +521,9 @@ func _physics_process(delta: float) -> void:
 
 
 func _server_tick(delta: float) -> void:
+	if versus:
+		_pvp_tick(delta)
+		return
 	# Fail check: everyone downed or dead
 	var alive := 0
 	for p in players.values():
@@ -656,10 +720,109 @@ func damage_enemy(eid: int, dmg: float, from: Vector3, shooter: int, explosive: 
 
 func explode(pos: Vector3, shooter: int) -> void:
 	Game.net_all("explosion_fx", [pos])
+	if versus:
+		for p in players.values():
+			var dp: float = p.global_position.distance_to(pos)
+			if dp < 7.0:
+				pvp_damage(shooter, p.peer_id, 120.0 * (1.0 - dp / 7.0) + 20.0, pos)
 	for e in enemies.values().duplicate():
 		var d: float = e.global_position.distance_to(pos)
 		if d < 7.0:
 			damage_enemy(e.eid, 160.0 * (1.0 - d / 7.0) + 40.0, pos, shooter, true)
+
+
+# ------------------------------------------------------------------ versus (host-authoritative)
+func _pvp_tick(delta: float) -> void:
+	pvp_time -= delta
+	pvp_cd -= delta
+	if pvp_cd <= 0.0:
+		pvp_cd = 0.25
+		Game.net_all("pvp_state", [pvp_scores, team_scores, pvp_time])
+	if pvp_time <= 0.0:
+		_pvp_finish()
+
+
+func pvp_damage(shooter: int, target: int, dmg: float, from: Vector3) -> void:
+	if ended or not is_hostile(shooter, target):
+		return  # friendly fire and self damage are off
+	var t = players.get(target)
+	if t == null or t.state != 0:
+		return
+	last_attacker[target] = shooter
+	Game.net_peer(target, "hit_player", [dmg, from])
+
+
+func on_pvp_died(victim: int) -> void:
+	if ended:
+		return
+	var killer: int = last_attacker.get(victim, 0)
+	last_attacker.erase(victim)
+	var vs: Vector2i = pvp_scores.get(victim, Vector2i.ZERO)
+	pvp_scores[victim] = Vector2i(vs.x, vs.y + 1)
+	var vname := _pname(victim)
+	if killer != 0 and killer != victim and players.has(killer):
+		var ks: Vector2i = pvp_scores.get(killer, Vector2i.ZERO)
+		pvp_scores[killer] = Vector2i(ks.x + 1, ks.y)
+		if not ffa:
+			if players[killer].team == 0:
+				team_scores.x += 1
+			else:
+				team_scores.y += 1
+		Game.net_all("feed", ["%s  >  %s" % [_pname(killer), vname]])
+	else:
+		Game.net_all("feed", ["%s went down" % vname])
+	Game.net_all("pvp_state", [pvp_scores, team_scores, pvp_time])
+	if ffa:
+		for pid in pvp_scores.keys():
+			if pvp_scores[pid].x >= pvp_target:
+				_pvp_finish()
+				return
+	elif team_scores.x >= pvp_target or team_scores.y >= pvp_target:
+		_pvp_finish()
+
+
+func _pname(pid: int) -> String:
+	return players[pid].display_name if players.has(pid) else "Trooper"
+
+
+func _pvp_finish() -> void:
+	if ended:
+		return
+	if ffa:
+		var best := -1
+		var bk := -1
+		for pid in pvp_scores.keys():
+			if pvp_scores[pid].x > bk:
+				bk = pvp_scores[pid].x
+				best = pid
+		Game.net_all("pvp_end", ["%s wins the Free-for-All with %d kills!" % [_pname(best), bk], -1, best])
+	else:
+		var wt := 0 if team_scores.x > team_scores.y else (1 if team_scores.y > team_scores.x else -1)
+		var text := "RED TEAM WINS!" if wt == 0 else ("BLUE TEAM WINS!" if wt == 1 else "DRAW!")
+		Game.net_all("pvp_end", ["%s  %d - %d" % [text, team_scores.x, team_scores.y], wt, 0])
+
+
+func apply_pvp(scores: Dictionary, teams: Vector2i, t: float) -> void:
+	pvp_scores = scores
+	team_scores = teams
+	pvp_time = t
+
+
+func on_pvp_end(text: String, win_team: int, win_id: int) -> void:
+	if ended:
+		return
+	ended = true
+	var me := multiplayer.get_unique_id()
+	var lp = local_player()
+	var my_kills: int = pvp_scores.get(me, Vector2i.ZERO).x
+	var won := false
+	if lp != null:
+		won = (win_id == me) if ffa else (win_team == lp.team)
+	var credits := my_kills * 10 + (100 if won else 25)
+	Game.save["credits"] = int(Game.save["credits"]) + credits
+	Game.write_save()
+	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+	hud.show_pvp_end(text, won, credits, my_kills)
 
 
 func _end_mission(win: bool) -> void:
@@ -872,6 +1035,9 @@ func _update_visuals(delta: float) -> void:
 
 # ------------------------------------------------------------------ headless test autopilot
 func _test_autopilot(delta: float) -> void:
+	if Game.test_mode == "pvp_server":
+		_test_pvp_server(delta)
+		return
 	if Game.test_mode not in ["smoke", "smoke2", "smokefail", "walkcap", "kbtest"]:
 		return
 	test_elapsed += delta
@@ -996,3 +1162,40 @@ func _cam_angle_to(lp, e) -> float:
 		return 0.0
 	var d: Vector3 = e.global_position + Vector3(0, 1.2, 0) - lp.cam.global_position
 	return (-lp.cam.global_transform.basis.z).angle_to(d)
+
+
+## Host repeatedly "shoots" the client through the real authoritative path; the client must
+## die, report its death, respawn after 5 s and die again (2 kills credited to the host).
+func _test_pvp_server(delta: float) -> void:
+	test_elapsed += delta
+	test_cd -= delta
+	pvp_damage(1, 1, 9999.0, Vector3.ZERO)  # self damage must be ignored
+	if players.has(1) and players[1].state != 0:
+		Game.finish_test(false, "PVP self-damage applied")
+		return
+	for pid in players.keys():
+		if pid != 1 and test_cd <= 0.0 and players[pid].state == 0:
+			test_cd = 0.5
+			pvp_damage(1, pid, 9999.0, players[1].global_position)
+	var k: int = pvp_scores.get(1, Vector2i.ZERO).x
+	if k >= 2 and _t_mark == 0.0:
+		_t_mark = test_elapsed
+	if k >= 2 and not ended and test_elapsed > _t_mark + 7.0:
+		print("[test] pvp server: host kills=%d team score=%s client deaths=%s" % [k, team_scores, pvp_scores])
+		Game.finish_test(team_scores.x >= 2 or team_scores.y >= 2, "PVP SERVER kills+respawn+team score")
+
+
+func _process(_delta: float) -> void:
+	if Game.test_mode != "pvp_client":
+		return
+	var lp = local_player()
+	if lp == null:
+		return
+	if lp.state == 2:
+		_pvp_saw_dead = true
+	elif _pvp_saw_dead and lp.state == 0:
+		_pvp_saw_dead = false
+		_pvp_respawns += 1
+		print("[test] pvp client: respawned at %s (team %d)" % [lp.global_position, lp.team])
+		if _pvp_respawns >= 2:
+			Game.finish_test(versus and not ffa, "PVP CLIENT died and respawned")
