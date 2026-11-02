@@ -18,16 +18,27 @@ const UPGRADES := {
 }
 
 var MAPS: Array = [
-	{"name": "Geonosis Outpost", "posts": [Vector3(0, 0, -30), Vector3(50, 0, 10), Vector3(-45, 0, 35)],
-		"lz": Vector3(0, 0, 72), "ground": Color(0.76, 0.55, 0.36), "cliff": Color(0.55, 0.36, 0.24),
-		"rock": Color(0.6, 0.42, 0.3), "sky_top": Color(0.55, 0.35, 0.22), "sky_hor": Color(0.95, 0.7, 0.45),
-		"fog": Color(0.85, 0.6, 0.4), "fog_density": 0.006, "sun": Color(1.0, 0.9, 0.75), "sun_energy": 1.2,
-		"ambient": 0.8, "rocks": 70, "pillar_ratio": 0.35},
-	{"name": "Felucia Night Raid", "posts": [Vector3(-50, 0, -40), Vector3(40, 0, -45), Vector3(10, 0, 20)],
-		"lz": Vector3(60, 0, 70), "ground": Color(0.2, 0.33, 0.22), "cliff": Color(0.18, 0.22, 0.2),
-		"rock": Color(0.42, 0.28, 0.52), "sky_top": Color(0.03, 0.06, 0.12), "sky_hor": Color(0.15, 0.3, 0.3),
-		"fog": Color(0.15, 0.3, 0.28), "fog_density": 0.014, "sun": Color(0.6, 0.75, 1.0), "sun_energy": 0.45,
-		"ambient": 0.6, "rocks": 95, "pillar_ratio": 0.7},
+	{"name": "Geonosis Canyon Outpost", "layout": "geonosis",
+		"posts": [Vector3(0, 0, -30), Vector3(50, 0, 10), Vector3(-45, 0, 35)],
+		"lz": Vector3(0, 0, 72), "spawns": [Vector3(0, 0, 80), Vector3(-8, 0, -82)],
+		"ground": Color(0.6, 0.4, 0.25), "cliff": Color(0.62, 0.4, 0.26), "rock": Color(0.66, 0.44, 0.3),
+		"sky_top": Color(0.42, 0.3, 0.24), "sky_hor": Color(0.95, 0.68, 0.42),
+		"fog": Color(0.88, 0.62, 0.4), "fog_density": 0.006, "sun": Color(1.0, 0.88, 0.7), "sun_energy": 1.1,
+		"ambient": 0.5, "sun_rot": Vector3(-42, 30, 0), "post_col": Color(0.6, 0.55, 0.5), "high": [Vector3(-24, 5, 0), Vector3(24, 5, 38), Vector3(-24, 5, -45)]},
+	{"name": "Felucia Jungle Ruins", "layout": "felucia",
+		"posts": [Vector3(-50, 0, -40), Vector3(40, 0, -45), Vector3(10, 0, 20)],
+		"lz": Vector3(60, 0, 70), "spawns": [Vector3(60, 0, 82), Vector3(-60, 0, -82)],
+		"ground": Color(0.22, 0.36, 0.22), "cliff": Color(0.18, 0.22, 0.2), "rock": Color(0.42, 0.28, 0.52),
+		"sky_top": Color(0.05, 0.1, 0.16), "sky_hor": Color(0.2, 0.38, 0.34),
+		"fog": Color(0.2, 0.36, 0.32), "fog_density": 0.013, "sun": Color(0.7, 0.85, 1.0), "sun_energy": 0.55,
+		"ambient": 0.7, "sun_rot": Vector3(-60, -40, 0), "post_col": Color(0.45, 0.5, 0.44), "lz_glow": Color(0.4, 1.0, 0.8), "high": [Vector3(-5, 3, -54), Vector3(-5, 6, -64)]},
+	{"name": "Kamino Storm Platform", "layout": "kamino",
+		"posts": [Vector3(-40, 0, -35), Vector3(45, 0, -20), Vector3(0, 0, 30)],
+		"lz": Vector3(0, 0, 72), "spawns": [Vector3(0, 0, 84), Vector3(0, 0, -84)],
+		"ground": Color(0.3, 0.33, 0.37), "cliff": Color(0.3, 0.32, 0.36), "rock": Color(0.5, 0.52, 0.56),
+		"sky_top": Color(0.12, 0.15, 0.2), "sky_hor": Color(0.35, 0.42, 0.5),
+		"fog": Color(0.36, 0.42, 0.5), "fog_density": 0.011, "sun": Color(0.75, 0.82, 1.0), "sun_energy": 0.6,
+		"ambient": 0.5, "sun_rot": Vector3(-65, 20, 0), "post_col": Color(0.75, 0.78, 0.82), "lz_glow": Color(0.5, 0.8, 1.0), "high": [Vector3(0, 3, -5)]},
 ]
 var DIFFICULTIES: Array = [
 	{"name": "Recruit", "hp": 0.75, "dmg": 0.6, "cap": -1, "credits": 0.75},
@@ -755,6 +766,10 @@ func _start_test() -> void:
 			aim_assist = true
 			settings = {"map": 1, "diff": 2, "mode": 0} if test_mode == "smoke2" else {"map": 0, "diff": 1, "mode": 0}
 			start_singleplayer()
+		"mapcheck0", "mapcheck1", "mapcheck2":
+			player_name = "MapTester"
+			settings = {"map": int(test_mode.right(1)), "diff": 1, "mode": 0}
+			start_singleplayer()
 		"server", "server_late":
 			player_name = "TestHost"
 			var e := host_game(DEFAULT_PORT + 1)
@@ -785,13 +800,13 @@ func _start_test() -> void:
 			print("[test] client joining err='%s'" % e2)
 		"menu":
 			pass
-		"shot":
+		"shot", "shot0", "shot1", "shot2":
 			await get_tree().create_timer(2.5).timeout
 			await _save_shot("/tmp/ds_menu.png")
-			settings = {"map": 1, "diff": 1, "mode": 0}
+			settings = {"map": 1 if test_mode == "shot" else int(test_mode.right(1)), "diff": 1, "mode": 0}
 			start_singleplayer()
 			await get_tree().create_timer(9.0).timeout
-			_save_shot("/tmp/ds_game.png")
+			_save_shot("/tmp/ds_game_%s.png" % test_mode)
 			get_tree().quit(0)
 
 

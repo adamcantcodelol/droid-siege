@@ -7,6 +7,8 @@ const EnemyScript = preload("res://scripts/enemy.gd")
 const BoltScript = preload("res://scripts/bolt.gd")
 const GrenadeScript = preload("res://scripts/grenade.gd")
 const HudScript = preload("res://scripts/hud.gd")
+const MapBuilderScript = preload("res://scripts/map_builder.gd")
+const MapsScript = preload("res://scripts/maps.gd")
 
 var M: Dictionary = {}
 var DIFF: Dictionary = {}
@@ -46,6 +48,9 @@ var post_visuals := []
 var gunship: Node3D
 var nav_region: NavigationRegion3D
 var nav_polys := 0
+var builder
+var rain: Node3D = null
+var droid_spawns: Array = []
 var test_speed := 1.0
 var versus := false
 var ffa := false
@@ -99,6 +104,8 @@ func _ready() -> void:
 			on_peer_ready(1)
 	else:
 		Game.rpc_id(1, "client_world_ready")
+	if Game.test_mode.begins_with("mapcheck"):
+		_test_mapcheck.call_deferred()
 	show_message("%s (%s): squad deployed! Head for Command Post ALPHA." % [M["name"], DIFF["name"]])
 
 
@@ -183,83 +190,15 @@ func _build_level() -> void:
 	nm.agent_max_climb = 0.4
 	nav_region.navigation_mesh = nm
 	add_child(nav_region)
-	# Sky / environment (Geonosis-style dusty orange planet)
-	var env := Environment.new()
-	env.background_mode = Environment.BG_SKY
-	var sky := Sky.new()
-	var sm := ProceduralSkyMaterial.new()
-	sm.sky_top_color = M["sky_top"]
-	sm.sky_horizon_color = M["sky_hor"]
-	sm.ground_horizon_color = Color(0.8, 0.55, 0.35)
-	sm.ground_bottom_color = Color(0.35, 0.22, 0.14)
-	sky.sky_material = sm
-	env.sky = sky
-	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
-	env.ambient_light_energy = M["ambient"]
-	env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
-	env.fog_enabled = true
-	env.fog_light_color = M["fog"]
-	env.fog_density = M["fog_density"]
-	env.glow_enabled = true
-	var we := WorldEnvironment.new()
-	we.environment = env
-	add_child(we)
-	var sun := DirectionalLight3D.new()
-	sun.rotation_degrees = Vector3(-50, 35, 0)
-	sun.light_color = M["sun"]
-	sun.light_energy = M["sun_energy"]
-	sun.shadow_enabled = true
-	sun.directional_shadow_max_distance = 120.0
-	add_child(sun)
-
-	# Ground
-	var g := _add_box(Vector3(0, -0.5, 0), Vector3(240, 1, 240), M["ground"])
-	g.name = "Ground"
-	# Boundary cliffs
-	for i in 4:
-		var horizontal := i < 2
-		var s := 1.0 if i % 2 == 0 else -1.0
-		var pos := Vector3(0, 6, s * (MAP_HALF + 6)) if horizontal else Vector3(s * (MAP_HALF + 6), 6, 0)
-		var size := Vector3(220, 12, 8) if horizontal else Vector3(8, 12, 220)
-		_add_box(pos, size, M["cliff"])
-	# Random rock cover (deterministic from mission seed so all peers match)
-	var placed := 0
-	var tries := 0
-	while placed < int(M["rocks"]) and tries < 600:
-		tries += 1
-		var p := Vector3(rng.randf_range(-MAP_HALF + 5, MAP_HALF - 5), 0, rng.randf_range(-MAP_HALF + 5, MAP_HALF - 5))
-		var blocked := p.distance_to(LZ) < 14.0
-		for post in POSTS:
-			if p.distance_to(post) < CAPTURE_RADIUS + 5.0:
-				blocked = true
-		if blocked:
-			continue
-		placed += 1
-		var shade := rng.randf_range(0.8, 1.1)
-		var rc: Color = M["rock"]
-		var col := Color(rc.r * shade, rc.g * shade, rc.b * shade)
-		if rng.randf() < float(M["pillar_ratio"]):
-			_add_pillar(p, rng.randf_range(1.0, 2.5), rng.randf_range(4.0, 14.0), col)
-		else:
-			var sz := Vector3(rng.randf_range(1.5, 6.0), rng.randf_range(1.2, 3.0), rng.randf_range(1.0, 3.0))
-			_add_box(p + Vector3(0, sz.y / 2.0, 0), sz, col, rng.randf_range(0, PI))
-
-	# Command posts: CSG ring wall with doorways + flag pole + capture ring
+	builder = MapBuilderScript.new(self, nav_region)
+	var layout = MapsScript.new()
+	layout.build(builder, M)
+	rain = layout.rain
+	droid_spawns = builder.spawn_points
 	for i in POSTS.size():
 		_build_post(i)
-
-	# Landing zone pad
-	var pad := MeshInstance3D.new()
-	var pm := CylinderMesh.new()
-	pm.top_radius = 8.0
-	pm.bottom_radius = 8.0
-	pm.height = 0.1
-	pm.material = _mat(Color(0.35, 0.35, 0.4), 0.6)
-	pad.mesh = pm
-	pad.position = LZ + Vector3(0, 0.05, 0)
-	add_child(pad)
-	_add_box(LZ + Vector3(-6, 0.6, -6), Vector3(3, 1.2, 1), Color(0.4, 0.4, 0.45))
-	_add_box(LZ + Vector3(6, 0.6, -6), Vector3(3, 1.2, 1), Color(0.4, 0.4, 0.45))
+	builder.flush()
+	print("[map] %s built: %d droid entry points, %d occluders" % [M["name"], droid_spawns.size(), builder.occluders])
 
 	gunship = _build_gunship()
 	gunship.position = LZ + Vector3(0, 80, 0)
@@ -282,34 +221,6 @@ func nav_path_length(a: Vector3, b: Vector3) -> int:
 
 func _build_post(i: int) -> void:
 	var center: Vector3 = POSTS[i]
-	var csg := CSGCombiner3D.new()
-	csg.use_collision = true
-	csg.collision_layer = 1
-	csg.collision_mask = 0
-	csg.position = center
-	var outer := CSGCylinder3D.new()
-	outer.radius = CAPTURE_RADIUS + 1.6
-	outer.height = 1.3
-	outer.sides = 24
-	outer.position.y = 0.65
-	outer.material = _mat(Color(0.65, 0.65, 0.7), 0.5)
-	csg.add_child(outer)
-	var inner := CSGCylinder3D.new()
-	inner.operation = CSGShape3D.OPERATION_SUBTRACTION
-	inner.radius = CAPTURE_RADIUS + 1.0
-	inner.height = 2.0
-	inner.sides = 24
-	inner.position.y = 0.65
-	csg.add_child(inner)
-	for d in 4:
-		var door := CSGBox3D.new()
-		door.operation = CSGShape3D.OPERATION_SUBTRACTION
-		door.size = Vector3(3.2, 3, 4)
-		door.position = Vector3(0, 0.65, 0)
-		door.rotation.y = d * PI / 2.0
-		door.position = Vector3(sin(d * PI / 2.0), 0, cos(d * PI / 2.0)) * (CAPTURE_RADIUS + 1.3) + Vector3(0, 0.65, 0)
-		csg.add_child(door)
-	nav_region.add_child(csg)
 	# Capture ring (visual)
 	var ring := MeshInstance3D.new()
 	var rm := CylinderMesh.new()
@@ -345,8 +256,9 @@ func _build_post(i: int) -> void:
 	lbl.position = center + Vector3(0, 10, 0)
 	add_child(lbl)
 	# Ammo/supply crates as cover inside
-	_add_box(center + Vector3(3, 0.5, 2), Vector3(1.2, 1.0, 1.2), Color(0.3, 0.35, 0.5))
-	_add_box(center + Vector3(-3, 0.5, -2), Vector3(1.2, 1.0, 1.2), Color(0.3, 0.35, 0.5))
+	builder.prop("crate", center + Vector3(3, 0, 2), 0.4, 1.1, "box")
+	builder.prop("crate", center + Vector3(-3, 0, -2), 1.1, 1.1, "box")
+	builder.prop("barrel", center + Vector3(-3.4, 0, 2.6), 0.0, 1.2, "cyl", Color.WHITE, 1.0, 0.45)
 	post_visuals.append({"ring_mat": ring_mat, "flag": flag, "flag_mat": flag_mat, "label": lbl, "center": center})
 
 
@@ -411,10 +323,10 @@ func _spawn_for(team: int, salt: int) -> Vector3:
 	var r := RandomNumberGenerator.new()
 	r.randomize()
 	if not ffa:
-		var base := Vector3(0, 1.0, 78.0 if team == 0 else -78.0)
-		return base + Vector3(r.randf_range(-12, 12) + salt * 0.0, 0, r.randf_range(-3, 3))
-	var ang := r.randf() * TAU
-	return Vector3(cos(ang) * 60.0, 1.0, sin(ang) * 60.0)
+		var base: Vector3 = M["spawns"][clampi(team, 0, 1)]
+		return base + Vector3(r.randf_range(-4, 4) + salt * 0.0, 1.0, r.randf_range(-3, 3))
+	var pts: Array = droid_spawns + M["spawns"]
+	return pts[r.randi() % pts.size()] + Vector3(r.randf_range(-2, 2), 1.0, r.randf_range(-2, 2))
 
 
 ## Respawn position for a versus player (team spawn or random FFA spot).
@@ -659,7 +571,16 @@ func _spawn_enemy() -> void:
 		var np := nearest_open_post(lp0.global_position if lp0 != null else LZ)
 		focus = POSTS[maxi(np, 0)]
 	var pos := Vector3.ZERO
-	for attempt in 12:
+	var cands := []
+	for sp in droid_spawns:
+		var dd: float = _flat_dist(sp, focus)
+		var near := false
+		for p in players.values():
+			if _flat_dist(p.global_position, sp) < 25.0:
+				near = true
+		if dd > 30.0 and dd < 80.0 and not near:
+			cands.append(sp)
+	for attempt in (0 if cands.size() > 0 else 12):
 		var ang := rng.randf() * TAU
 		var dist := rng.randf_range(45.0, 65.0)
 		pos = focus + Vector3(cos(ang), 0, sin(ang)) * dist
@@ -671,6 +592,10 @@ func _spawn_enemy() -> void:
 				ok = false
 		if ok:
 			break
+	if cands.size() > 0:
+		pos = cands[rng.randi() % cands.size()] + Vector3(rng.randf_range(-3, 3), 0, rng.randf_range(-3, 3))
+	elif nav_polys > 0:
+		pos = NavigationServer3D.map_get_closest_point(get_world_3d().navigation_map, pos)
 	pos.y = 0.5
 	var id := next_enemy_id
 	next_enemy_id += 1
@@ -1005,6 +930,10 @@ func show_message(text: String) -> void:
 
 
 func _update_visuals(delta: float) -> void:
+	if rain != null:
+		var cam := get_viewport().get_camera_3d()
+		if cam != null:
+			rain.global_position = cam.global_position + Vector3(0, 14, 0)
 	for i in post_visuals.size():
 		var v: Dictionary = post_visuals[i]
 		var col := Color(0.8, 0.2, 0.15)
@@ -1200,3 +1129,54 @@ func _process(_delta: float) -> void:
 		print("[test] pvp client: respawned at %s (team %d)" % [lp.global_position, lp.team])
 		if _pvp_respawns >= 2:
 			Game.finish_test(versus and not ffa, "PVP CLIENT died and respawned")
+
+
+## Map sanity: navmesh baked, every post reachable from the LZ, both team spawns and every droid
+## entry point; spawn points and post centres are not inside geometry.
+func _test_mapcheck() -> void:
+	spawn_cd = 9999.0
+	await get_tree().create_timer(1.5).timeout
+	var map := get_world_3d().navigation_map
+	var space := get_world_3d().direct_space_state
+	var shape := SphereShape3D.new()
+	shape.radius = 0.6
+	var q := PhysicsShapeQueryParameters3D.new()
+	q.shape = shape
+	q.collision_mask = 1
+	var fails := []
+	var starts := {"LZ": LZ}
+	for i in M["spawns"].size():
+		starts["team%d" % i] = M["spawns"][i]
+	for i in droid_spawns.size():
+		starts["droid%d" % i] = droid_spawns[i]
+	for i in POSTS.size():
+		starts["post%d" % i] = POSTS[i] + Vector3(3, 0, 0)
+	for key in starts:
+		var p: Vector3 = starts[key]
+		q.transform = Transform3D(Basis(), p + Vector3(0, 1.0, 0))
+		if space.intersect_shape(q, 1).size() > 0:
+			fails.append("%s blocked" % key)
+		for i in POSTS.size():
+			var a := NavigationServer3D.map_get_closest_point(map, p)
+			var b := NavigationServer3D.map_get_closest_point(map, POSTS[i])
+			var path := NavigationServer3D.map_get_path(map, a, b, true)
+			if path.size() < 2 or path[path.size() - 1].distance_to(b) > 1.5 or a.distance_to(p) > 2.5:
+				fails.append("%s->post%d unreachable" % [key, i])
+	for h in M.get("high", []):
+		var hp := NavigationServer3D.map_get_closest_point(map, h)
+		var hpath := NavigationServer3D.map_get_path(map, NavigationServer3D.map_get_closest_point(map, LZ), hp, true)
+		if absf(hp.y - h.y) > 0.8 or hpath.size() < 2 or hpath[hpath.size() - 1].distance_to(hp) > 1.0:
+			fails.append("high ground %s not walkable (got %s)" % [h, hp])
+	var mm := 0
+	var tris := 0
+	for n in builder.deco.get_children():
+		if n is MultiMeshInstance3D:
+			mm += 1
+			var mesh: Mesh = n.multimesh.mesh
+			var t := 0
+			for si in mesh.get_surface_count():
+				var arr := mesh.surface_get_arrays(si)
+				t += (arr[Mesh.ARRAY_INDEX].size() if arr[Mesh.ARRAY_INDEX] != null else arr[Mesh.ARRAY_VERTEX].size()) / 3
+			tris += t * n.multimesh.instance_count
+	print("[test] mapcheck %s: nav polys=%d, %d start points, %d multimesh batches, %d prop tris, fails=%s" % [M["name"], nav_polys, starts.size(), mm, tris, fails])
+	Game.finish_test(nav_polys > 100 and fails.is_empty(), "MAPCHECK %s" % M["name"])

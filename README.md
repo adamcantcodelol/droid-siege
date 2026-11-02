@@ -13,7 +13,7 @@ A free, multiplayer third-person clone trooper shooter made in **Godot 4.7.2**. 
 - **Co-op: Droid Siege.** Capture command posts ALPHA, BRAVO and CHARLIE **in any order** by standing in their rings. A HUD bar shows capture progress, and the flag rises with it. If there are more droids than troopers in a ring, it is **CONTESTED** and the capture pauses. After all three, survive 2 minutes until the gunship arrives. If everyone is down, the mission fails.
 - **Versus: Team Deathmatch.** Red vs Blue clones, auto-balanced. Friendly fire is off. First team to 15 kills wins, or whoever leads after 8 minutes. You respawn 5 s after dying at your team's spawn. Hold **Tab** for the scoreboard.
 - **Versus: Free-for-All.** Everyone against everyone. First to 10 kills wins.
-- The host picks the mode in the lobby. Map (**Geonosis Outpost** or **Felucia Night Raid**) and difficulty (**Recruit / Veteran / Commando**) are picked on the main menu.
+- The host picks the mode in the lobby. Map (**Geonosis Canyon Outpost**, **Felucia Jungle Ruins** or **Kamino Storm Platform**: hand-designed levels built from CC0 kits, see CREDITS.md) and difficulty (**Recruit / Veteran / Commando**) are picked on the main menu.
 
 ## Enemies (co-op)
 - **B1 battle droids** are weak and numerous.
@@ -90,3 +90,13 @@ The Godot 4.7.2 export templates (web + windows) need to be installed.
 - `scripts/world.gd`: level, co-op mission, versus logic, enemy sync.
 - `scripts/player.gd`, `enemy.gd`, `hud.gd`, `crosshair.gd`, `main_menu.gd`, `bolt.gd`, `grenade.gd`
 - `relay/relay.js` + `render.yaml`: room-code relay server and its free-hosting blueprint.
+
+## Maps
+All three maps are hand-laid-out in `scripts/maps.gd` using CC0 model kits (`models/`, credits in `CREDITS.md`) and built at load time by `scripts/map_builder.gd`:
+- **Geonosis Canyon Outpost**: two mesas split the canyon into west / centre / east lanes (ramps up to sandbag sniper nests), rock arches over the lanes, bunkers guarding ALPHA, a smoking droid factory in the NE where droids pour out; landmarks: comms tower (ALPHA), gun emplacement (BRAVO), crashed gunship (CHARLIE).
+- **Felucia Jungle Ruins**: giant fungi forest, four glowing ponds, a two-tier temple overlook in the north, broken walls and a colonnade; landmarks: ancient gate (ALPHA), giant glowing fungus (BRAVO), statue (CHARLIE).
+- **Kamino Storm Platform**: rain-lashed deck over the ocean, Tipoca domes on stilts, raised central gantry with ramps, four cargo-container yards, a parked gunship platform (BRAVO).
+
+Each map defines team spawns (Versus), droid entry points (co-op enemy waves spawn from these), and high-ground checks.
+Performance: repeated props are batched into MultiMeshInstance3D (≈17-23 draw batches per map), collision is primitive boxes/cylinders, omni lights have no shadows and fade at 60 m, the sun uses 2-split shadows to 70 m, big solids carry box occluders.
+`--test=mapcheck0/1/2` verifies the navmesh bakes and every post is reachable from the LZ, both team spawns, every droid entry point and the high ground.
