@@ -6,6 +6,7 @@ var panels := {}
 var name_edit: LineEdit
 var port_edit: LineEdit
 var ip_edit: LineEdit
+var ws_edit: LineEdit
 var lobby_label: Label
 var lobby_info: Label
 var start_btn: Button
@@ -159,6 +160,18 @@ func _build_main(holder: Control) -> Control:
 func _build_mp(holder: Control) -> Control:
 	var box := _panel(holder)
 	_lbl(box, "MULTIPLAYER (up to 4 troopers)", 22)
+	_lbl(box, "Online server (works in browsers / school Wi-Fi):")
+	ws_edit = LineEdit.new()
+	ws_edit.text = str(Game.save.get("ws_url", ""))
+	ws_edit.placeholder_text = "wss://your-droid-siege-server.onrender.com"
+	box.add_child(ws_edit)
+	_btn(box, "Join Online Server", _on_join_ws)
+	var direct := VBoxContainer.new()
+	box.add_child(direct)
+	if Game.is_web():
+		_lbl(box, "Direct IP hosting (ENet) is only available in the desktop version.", 13)
+		direct.visible = false
+	box = direct
 	_lbl(box, "Port (UDP):")
 	port_edit = LineEdit.new()
 	port_edit.text = str(Game.DEFAULT_PORT)
@@ -171,8 +184,8 @@ func _build_mp(holder: Control) -> Control:
 	box.add_child(ip_edit)
 	_btn(box, "Join Game", _on_join)
 	_lbl(box, "Same Wi-Fi: use the host's LAN IP. Different houses: install Tailscale (free) on every PC, sign into the same tailnet, and join the host's 100.x.y.z address.", 13)
-	_btn(box, "Back", func(): _show("main"))
-	return box
+	_btn(direct.get_parent(), "Back", func(): _show("main"))
+	return direct.get_parent()
 
 
 func _build_lobby(holder: Control) -> Control:
@@ -254,6 +267,20 @@ func _on_host() -> void:
 	_show("lobby")
 
 
+func _on_join_ws() -> void:
+	Game.save["ws_url"] = ws_edit.text.strip_edges()
+	Game.write_save()
+	if ws_edit.text.strip_edges() == "":
+		status.text = "Enter the online server address first (see README: Online server)."
+		return
+	var err := Game.join_ws(ws_edit.text)
+	if err != "":
+		status.text = err
+		return
+	status.text = "Connecting to %s ... (a sleeping free server can take up to a minute to wake)" % ws_edit.text
+	_show("lobby")
+
+
 func _on_join() -> void:
 	Game.write_save()
 	var err := Game.join_game(ip_edit.text, int(port_edit.text))
@@ -282,12 +309,14 @@ func _refresh_lobby() -> void:
 		t = "(connecting...)"
 	lobby_label.text = "Troopers (%d/4):\n%s" % [Game.players.size(), t]
 	var is_host: bool = Game.online and multiplayer.is_server()
-	start_btn.visible = is_host
+	start_btn.visible = is_host or (Game.server_is_dedicated and Game.online)
 	if is_host:
 		var ips := PackedStringArray()
 		for a in IP.get_local_addresses():
 			if a.count(".") == 3 and not a.begins_with("127.") and not a.begins_with("169.254"):
 				ips.append(a + ("  (Tailscale)" if a.begins_with("100.") else ""))
 		lobby_info.text = "Your IP addresses (share one):\n%s\nPort %s. Map and difficulty come from your main menu choice. Late joiners drop in at the landing zone. Press Start when your squad is in." % ["\n".join(ips), port_edit.text]
+	elif Game.server_is_dedicated:
+		lobby_info.text = "Online server. Any trooper can press Start Mission (uses your map/difficulty choice)."
 	else:
 		lobby_info.text = "Waiting for the host to start the mission..."

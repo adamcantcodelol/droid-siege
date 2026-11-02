@@ -285,8 +285,9 @@ func show_end(win: bool, credits: int, kills: int) -> void:
 	end_stats.text = "%s\nDroids destroyed: %d\nCredits earned: %d   (Total: %d)\nSpend credits in the Armory from the main menu." % [
 		"The gunship extracted your squad. Good work, trooper!" if win else "Your squad was overrun.",
 		kills, credits, int(Game.save["credits"])]
-	again_btn.visible = multiplayer.is_server()
-	wait_label.visible = not multiplayer.is_server()
+	var can_restart: bool = multiplayer.is_server() or Game.server_is_dedicated
+	again_btn.visible = can_restart
+	wait_label.visible = not can_restart
 
 
 func _process(delta: float) -> void:

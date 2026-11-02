@@ -74,7 +74,7 @@ func _ready() -> void:
 	keys.sort()
 	for i in keys.size():
 		_add_player(int(keys[i]), i)
-	if not players.has(multiplayer.get_unique_id()):
+	if not players.has(multiplayer.get_unique_id()) and not Game.dedicated:
 		# Safety: make sure we always have a local player.
 		_add_player(multiplayer.get_unique_id(), players.size())
 	hud = HudScript.new()
@@ -82,7 +82,8 @@ func _ready() -> void:
 	if not Game.is_headless():
 		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 	if multiplayer.is_server():
-		on_peer_ready(1)
+		if not Game.dedicated:
+			on_peer_ready(1)
 	else:
 		Game.rpc_id(1, "client_world_ready")
 	show_message("%s (%s): squad deployed! Head for Command Post ALPHA." % [M["name"], DIFF["name"]])
@@ -440,6 +441,8 @@ func _check_start() -> void:
 	for pid in Game.players.keys():
 		if not ready_peers.has(pid):
 			return
+	if Game.players.is_empty():
+		return
 	started = true
 	Game.net_all("announce", ["All troopers on the ground. Capture Command Post ALPHA!"])
 

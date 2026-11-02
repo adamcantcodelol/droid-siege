@@ -43,6 +43,9 @@ var player_name := "Trooper"
 var players := {}          # peer_id -> {"name": String}
 var online := false
 var in_mission := false
+var dedicated := false          # this process is a headless dedicated server (no local player)
+var server_is_dedicated := false # (clients) the server we joined is dedicated: any trooper can start
+const DEFAULT_WS_PORT := 8080
 var mission_seed := 1
 var settings := {"map": 0, "diff": 1}
 var world: Node = null
@@ -69,9 +72,16 @@ func _ready() -> void:
 	multiplayer.connected_to_server.connect(_on_connected)
 	multiplayer.connection_failed.connect(_on_connection_failed)
 	multiplayer.server_disconnected.connect(_on_server_disconnected)
+	var ded_port := int(OS.get_environment("PORT")) if OS.get_environment("PORT") != "" else DEFAULT_WS_PORT
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--test="):
 			test_mode = a.substr(7)
+		elif a == "--server":
+			dedicated = true
+		elif a.begins_with("--port="):
+			ded_port = int(a.substr(7))
+	if dedicated:
+		call_deferred("_start_dedicated", ded_port)
 	if test_mode != "":
 		print("[test] mode=", test_mode)
 		_test_start_ms = Time.get_ticks_msec()
@@ -166,7 +176,7 @@ func _bind(action: String, keys: Array, mouse_button: int = 0) -> void:
 # ---------------------------------------------------------------- save / upgrades
 func default_save() -> Dictionary:
 	return {"credits": 0, "dmg": 0, "rate": 0, "mag": 0, "armor": 0, "grenades": 2,
-		"missions": 0, "wins": 0, "name": "Trooper", "sens": 0.0025, "map": 0, "diff": 1, "controls": 0, "turn_speed": 2.6, "auto_fire": false, "aim_assist": true}
+		"missions": 0, "wins": 0, "name": "Trooper", "sens": 0.0025, "map": 0, "diff": 1, "controls": 0, "turn_speed": 2.6, "auto_fire": false, "aim_assist": true, "ws_url": ""}
 
 
 func load_save() -> void:
@@ -314,6 +324,42 @@ func host_game(port: int) -> String:
 	return ""
 
 
+## Dedicated WebSocket server (for browsers / school networks). Runs headless, no local player.
+func _start_dedicated(port: int) -> void:
+	leave_network()
+	var peer := WebSocketMultiplayerPeer.new()
+	var err := peer.create_server(port)
+	if err != OK:
+		push_error("Dedicated server: cannot listen on %d (error %d)" % [port, err])
+		get_tree().quit(1)
+		return
+	multiplayer.multiplayer_peer = peer
+	online = true
+	dedicated = true
+	players = {}
+	print("[server] Droid Siege dedicated WebSocket server listening on port %d" % port)
+
+
+func is_web() -> bool:
+	return OS.has_feature("web")
+
+
+## Join a dedicated server over WebSocket. Accepts wss://host, ws://host:port, or a bare host name.
+func join_ws(url: String) -> String:
+	leave_network()
+	var u := url.strip_edges()
+	if not (u.begins_with("ws://") or u.begins_with("wss://")):
+		u = "wss://" + u
+	var peer := WebSocketMultiplayerPeer.new()
+	var err := peer.create_client(u)
+	if err != OK:
+		return "Could not open WebSocket to %s (error %d)" % [u, err]
+	multiplayer.multiplayer_peer = peer
+	online = true
+	players = {}
+	return ""
+
+
 func join_game(ip: String, port: int) -> String:
 	leave_network()
 	var peer := ENetMultiplayerPeer.new()
@@ -342,12 +388,20 @@ func start_singleplayer() -> void:
 
 func start_mission() -> void:
 	if not multiplayer.is_server():
+		if server_is_dedicated and is_connected_online():
+			rpc_id(1, "request_start", settings)
+		return
+	if dedicated and players.is_empty():
 		return
 	write_save()
 	net_all("rpc_start_mission", [players, randi(), settings])
 
 
 func return_to_menu(message: String = "") -> void:
+	if dedicated:
+		in_mission = false
+		get_tree().change_scene_to_file(MENU_SCENE)
+		return
 	leave_network()
 	in_mission = false
 	menu_message = message
@@ -405,6 +459,9 @@ func _on_peer_disconnected(id: int) -> void:
 		world.show_message("%s left the game" % pname)
 	if multiplayer.is_server():
 		_broadcast_lobby()
+		if dedicated and players.is_empty() and in_mission:
+			print("[server] squad empty, back to lobby")
+			return_to_menu()
 	if test_mode in ["server", "server_late"] and not _test_done:
 		_test_done = true
 		var ok: bool = world != null and world.started and world.server_enemy_count_max > 0
@@ -419,7 +476,7 @@ func _on_connected() -> void:
 
 func _on_connection_failed() -> void:
 	leave_network()
-	net_status.emit("Could not connect. Check the IP/port and that the host's firewall allows UDP.")
+	net_status.emit("Could not connect. For direct IP: check the IP/port and that the host's firewall allows UDP. For online servers: check the wss:// address and that the server is awake (free hosts can take ~1 minute to wake up).")
 
 
 func _on_server_disconnected() -> void:
@@ -428,7 +485,7 @@ func _on_server_disconnected() -> void:
 
 func _broadcast_lobby() -> void:
 	if is_connected_online():
-		rpc("sync_lobby", players)
+		rpc("sync_lobby", players, dedicated)
 	lobby_changed.emit()
 
 
@@ -452,11 +509,24 @@ func register_player(pname: String) -> void:
 
 
 @rpc("authority", "call_remote", "reliable")
-func sync_lobby(p: Dictionary) -> void:
+func sync_lobby(p: Dictionary, ded: bool) -> void:
 	players = p
+	server_is_dedicated = ded
 	lobby_changed.emit()
 	if world != null:
 		world.sync_players()
+
+
+@rpc("any_peer", "call_remote", "reliable")
+func request_start(sett: Dictionary) -> void:
+	# Dedicated server: any connected trooper may start (or restart) the mission.
+	if not (multiplayer.is_server() and dedicated):
+		return
+	if world != null and not world.ended:
+		return
+	settings = {"map": int(sett.get("map", 0)), "diff": int(sett.get("diff", 1))}
+	print("[server] mission start requested by %d settings=%s" % [multiplayer.get_remote_sender_id(), settings])
+	start_mission()
 
 
 @rpc("authority", "call_remote", "reliable")
@@ -574,6 +644,10 @@ func _start_test() -> void:
 			player_name = "TestHost"
 			var e := host_game(DEFAULT_PORT + 1)
 			print("[test] server hosting on %d err='%s'" % [DEFAULT_PORT + 1, e])
+		"client_ws":
+			player_name = "WebTester"
+			var e3 := join_ws("ws://127.0.0.1:%d" % (DEFAULT_WS_PORT + 1))
+			print("[test] ws client joining err='%s'" % e3)
 		"client":
 			player_name = "TestClient"
 			var e2 := join_game("127.0.0.1", DEFAULT_PORT + 1)
@@ -611,6 +685,22 @@ func _process(_delta: float) -> void:
 			if elapsed > 90.0:
 				_test_done = true
 				print("[test] SERVER FAIL timeout")
+				get_tree().quit(1)
+		"client_ws":
+			if not in_mission and server_is_dedicated and players.size() >= 1 and elapsed > 1.0:
+				start_mission()  # any trooper can start on a dedicated server
+			if world != null and world.enemy_state_packets > 30 and world.enemies.size() > 0 \
+					and world.players.size() == players.size() and not players.has(1):
+				_test_done = true
+				print("[test] WS CLIENT OK: dedicated=%s players=%d enemies=%d enemy_packets=%d" % [
+					server_is_dedicated, world.players.size(), world.enemies.size(), world.enemy_state_packets])
+				net_server("req_damage", [int(world.enemies.keys()[0]), 5.0, Vector3.ZERO])
+				await get_tree().create_timer(0.5).timeout
+				leave_network()
+				get_tree().quit(0)
+			elif elapsed > 80.0:
+				_test_done = true
+				print("[test] WS CLIENT FAIL timeout")
 				get_tree().quit(1)
 		"client":
 			if world != null and world.enemy_state_packets > 30 and world.players.size() == 2 \
