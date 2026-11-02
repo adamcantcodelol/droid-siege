@@ -815,7 +815,7 @@ func mission_end(win: bool, credits: int, kills: int) -> void:
 # ---------------------------------------------------------------- headless test harness
 func _start_test() -> void:
 	match test_mode:
-		"smoke", "smoke2", "smokefail", "walkcap", "kbtest", "weapons":
+		"smoke", "smoke2", "smokefail", "walkcap", "kbtest", "weapons", "hitbox":
 			player_name = "SmokeTester"
 			control_mode = 1 if test_mode == "kbtest" else 0
 			aim_assist = true

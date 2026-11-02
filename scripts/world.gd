@@ -79,7 +79,7 @@ func _ready() -> void:
 	ffa = int(Game.settings.get("mode", 0)) == 2
 	pvp_target = 10 if ffa else 15
 	LZ = M["lz"]
-	if Game.test_mode in ["smoke", "smoke2", "smokefail", "walkcap", "kbtest", "weapons"]:
+	if Game.test_mode in ["smoke", "smoke2", "smokefail", "walkcap", "kbtest", "weapons", "hitbox"]:
 		test_speed = 4.0
 		Engine.time_scale = 3.0
 	players_root = _child_node("Players")
@@ -998,7 +998,7 @@ func _test_autopilot(delta: float) -> void:
 	if Game.test_mode == "pvp_server":
 		_test_pvp_server(delta)
 		return
-	if Game.test_mode not in ["smoke", "smoke2", "smokefail", "walkcap", "kbtest", "weapons"]:
+	if Game.test_mode not in ["smoke", "smoke2", "smokefail", "walkcap", "kbtest", "weapons", "hitbox"]:
 		return
 	test_elapsed += delta
 	var lp = local_player()
@@ -1006,6 +1006,9 @@ func _test_autopilot(delta: float) -> void:
 		return
 	if Game.test_mode == "walkcap":
 		_test_walkcap(delta, lp)
+		return
+	if Game.test_mode == "hitbox":
+		_test_hitbox(lp)
 		return
 	if Game.test_mode == "weapons":
 		_test_weapons(delta, lp)
@@ -1322,3 +1325,82 @@ func apply_quality(q: int) -> void:
 	for e in enemies.values():
 		if e.char_model != null:
 			e.char_model.set_shadows(q > 0)
+
+
+## Visual bounds of a character: bone positions of the posed skeleton (skinned mesh AABBs are
+## bind-pose and unreliable), padded for the head; falls back to mesh AABBs for rigid models.
+func visual_aabb(n: Node3D) -> AABB:
+	var sks := n.find_children("*", "Skeleton3D", true, false)
+	if sks.size() > 0:
+		var sk: Skeleton3D = sks[0]
+		var bb := AABB(sk.global_transform * sk.get_bone_global_pose(0).origin, Vector3.ZERO)
+		var head_y := -1e9
+		for b in sk.get_bone_count():
+			var p: Vector3 = (sk.global_transform * sk.get_bone_global_pose(b)).origin
+			bb = bb.expand(p)
+			if sk.get_bone_name(b).begins_with("Head"):
+				head_y = p.y
+		var ground: float = n.global_position.y
+		bb = bb.expand(Vector3(bb.position.x, ground, bb.position.z))
+		return bb
+	return _mesh_aabb(n)
+
+
+func _mesh_aabb(n: Node3D) -> AABB:
+	var out := AABB()
+	var first := true
+	for mi in n.find_children("*", "MeshInstance3D", true, false):
+		if not mi.is_visible_in_tree():
+			continue
+		var a: AABB = mi.global_transform * mi.get_aabb()
+		out = a if first else out.merge(a)
+		first = false
+	return out
+
+
+## Fire the player's real hitscan (camera ray) at the visual centre and head/legs of each droid type.
+func _test_hitbox(lp) -> void:
+	if _t_stage > 0:
+		return
+	_t_stage = 1
+	lp.god = true
+	spawn_cd = 9999.0
+	for e in enemies.values().duplicate():
+		damage_enemy(e.eid, 9999.0, Vector3.ZERO, 1, false)
+	var ok := true
+	var space := get_world_3d().direct_space_state
+	for t in [0, 1, 2, 3]:
+		var pos := Vector3(0, 0.0, LZ.z - 14.0)
+		var e = _create_enemy(next_enemy_id, t, pos)
+		next_enemy_id += 1
+		e.fire_cd = 999.0
+		e.deployed = t == 2
+		for k in 6:
+			await get_tree().physics_frame
+		e.global_position = pos
+		e._update_visual(0.016)
+		await get_tree().process_frame
+		var va := visual_aabb(e.model if t != 2 else e)
+		var cap: CapsuleShape3D = e.get_child(0).shape
+		var res := []
+		var head_y: float = [1.54, 1.78, 1.2, 1.62][t]
+		var head_r: float = [0.5, 0.62, 0.3, 0.52][t]
+		for spot in [Vector2(0, 0.5), Vector2(0, 0.15), Vector2(0, -1), Vector2(head_r * 0.8, -1)]:
+			var ty: float = (head_y if spot.y < 0 else va.position.y + va.size.y * spot.y)
+			var target := Vector3(e.global_position.x + spot.x, ty, e.global_position.z)
+			var from := target + Vector3(0, 0.3, 9.0)
+			var q := PhysicsRayQueryParameters3D.create(from, target + (target - from).normalized() * 3.0, lp._shot_mask(), [lp.get_rid()])
+			var hit := space.intersect_ray(q)
+			var good: bool = not hit.is_empty() and hit["collider"] == e
+			if not good:
+				print("[test]   miss at %s: %s e.pos=%s" % [target, hit.get("collider"), e.global_position])
+			res.append(good)
+			ok = ok and good
+		print("[test] hitbox %s: visual h=%.2f w=%.2f, capsule h=%.2f r=%.2f, hits centre/legs/head/head-edge=%s" % [EnemyScript.TYPES[t]["name"], va.size.y, va.size.x, cap.height, cap.radius, res])
+		if t == 1:
+			var clone_h: float = visual_aabb(lp.model).size.y
+			print("[test] hitbox B2 height %.2f vs clone %.2f (ratio %.2f)" % [va.size.y, clone_h, va.size.y / clone_h])
+			ok = ok and va.size.y / clone_h > 1.1
+		e.die()
+		enemies.erase(e.eid)
+	Game.finish_test(ok, "HITBOX every droid type hit at its visual centre/legs/head")

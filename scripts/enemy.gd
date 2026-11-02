@@ -69,6 +69,14 @@ func _ready() -> void:
 	cs.shape = cap
 	cs.position.y = cap.height / 2.0
 	add_child(cs)
+	# The robot models have big round heads wider than the body capsule: give them their own hurt sphere.
+	if etype != 2:
+		var hs := CollisionShape3D.new()
+		var sp := SphereShape3D.new()
+		sp.radius = [0.5, 0.62, 0, 0.52][etype]
+		hs.shape = sp
+		hs.position.y = [1.54, 1.78, 0, 1.62][etype]
+		add_child(hs)
 	_build_model()
 	if multiplayer.is_server():
 		agent = NavigationAgent3D.new()
@@ -113,9 +121,13 @@ func _build_model() -> void:
 			muzzle.position = Vector3(0.3, 1.15, -0.7)
 		1:  # B2: bulky gunmetal super droid
 			char_model = CharModel.new()
-			char_model.setup("res://models/robot_large.glb", 2.3, {"Main": Color(0.3, 0.34, 0.42), "Main2": Color(0.24, 0.26, 0.32), "Edge": Color(0.45, 0.48, 0.55)}, MECH_ANIMS)
+			# Upright bulked-up robot (the old mech asset was a low quadruped crawler): ~1.2x clone height, wide.
+			char_model.setup("res://models/robot.glb", 2.25, {"Main": Color(0.3, 0.34, 0.42), "Grey": Color(0.22, 0.24, 0.3)}, ROBOT_ANIMS)
+			char_model.scale *= Vector3(1.45, 1.0, 1.3)
 			model.add_child(char_model)
-			muzzle.position = Vector3(0.0, 1.3, -1.0)
+			_box(Vector3(0.22, 0.22, 0.5), Vector3(-0.55, 1.25, -0.35), Color(0.15, 0.15, 0.18))
+			_box(Vector3(0.22, 0.22, 0.5), Vector3(0.55, 1.25, -0.35), Color(0.15, 0.15, 0.18))
+			muzzle.position = Vector3(0.55, 1.25, -0.65)
 		3:  # OOM commander: yellow-marked droid that buffs nearby droids
 			char_model = CharModel.new()
 			char_model.setup("res://models/robot.glb", 2.05, {"Main": Color(0.92, 0.75, 0.2), "Grey": Color(0.85, 0.82, 0.75)}, ROBOT_ANIMS)
