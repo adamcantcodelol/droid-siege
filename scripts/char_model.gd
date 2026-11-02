@@ -88,3 +88,8 @@ func _process(delta: float) -> void:
 			return
 	ap.advance(_acc)
 	_acc = 0.0
+
+
+func set_shadows(on: bool) -> void:
+	for mi in meshes:
+		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON if on else GeometryInstance3D.SHADOW_CASTING_SETTING_OFF

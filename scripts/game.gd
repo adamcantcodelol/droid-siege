@@ -149,6 +149,54 @@ func build_control_options(box: Control) -> void:
 	extra.add_child(af)
 	extra.visible = control_mode == 1
 	opt.item_selected.connect(func(i): control_mode = i; extra.visible = i == 1; write_save())
+	var qrow := HBoxContainer.new()
+	var ql := Label.new()
+	ql.text = "Graphics:"
+	qrow.add_child(ql)
+	var qo := OptionButton.new()
+	qo.add_item("Auto (%s)" % QUALITY_NAMES[quality() if int(save.get("quality", -1)) < 0 else 0])
+	for n in QUALITY_NAMES:
+		qo.add_item(n)
+	qo.selected = int(save.get("quality", -1)) + 1
+	qo.item_selected.connect(func(i): save["quality"] = i - 1; write_save(); apply_quality())
+	qrow.add_child(qo)
+	box.add_child(qrow)
+
+
+const QUALITY_NAMES := ["Low", "Medium", "High"]
+
+
+## Effective graphics quality: saved choice, or auto (Low on web / integrated GPUs, High on discrete).
+func quality() -> int:
+	var q := int(save.get("quality", -1))
+	if q >= 0:
+		return clampi(q, 0, 2)
+	if OS.has_feature("web"):
+		return 0
+	var gpu := RenderingServer.get_video_adapter_name().to_lower()
+	for k in ["nvidia", "geforce", "rtx", "radeon rx"]:
+		if k in gpu:
+			return 2
+	return 0
+
+
+func quality_name() -> String:
+	return QUALITY_NAMES[quality()]
+
+
+## Apply the preset to the running world (render scale, shadows, glow, MSAA, rain, anim LOD).
+func apply_quality() -> void:
+	var q := quality()
+	var vp := get_viewport()
+	vp.scaling_3d_mode = Viewport.SCALING_3D_MODE_BILINEAR
+	vp.scaling_3d_scale = [0.7, 0.85, 1.0][q]
+	vp.msaa_3d = Viewport.MSAA_2X if q == 2 else Viewport.MSAA_DISABLED
+	RenderingServer.directional_shadow_atlas_set_size([1024, 2048, 4096][q], true)
+	var CM = load("res://scripts/char_model.gd")
+	CM.anim_lod_far = [25.0, 35.0, 60.0][q]
+	CM.anim_lod_every = [4, 3, 2][q]
+	if world != null:
+		world.apply_quality(q)
 
 
 func is_headless() -> bool:
@@ -772,6 +820,10 @@ func _start_test() -> void:
 			control_mode = 1 if test_mode == "kbtest" else 0
 			aim_assist = true
 			settings = {"map": 1, "diff": 2, "mode": 0} if test_mode == "smoke2" else {"map": 0, "diff": 1, "mode": 0}
+			start_singleplayer()
+		"bench0", "bench1", "bench2":
+			player_name = "Bench"
+			settings = {"map": int(test_mode.right(1)), "diff": 1, "mode": 0}
 			start_singleplayer()
 		"mapcheck0", "mapcheck1", "mapcheck2":
 			player_name = "MapTester"

@@ -175,7 +175,8 @@ func _felucia() -> void:
 	for i in 40:
 		var t := float(i) / 40.0 * TAU
 		var p := Vector3(clampf(cos(t) * 140.0, -97, 97), 0, clampf(sin(t) * 140.0, -97, 97))
-		B.prop("tree_spikes" if i % 3 == 0 else "tree_blob", p, t, r.randf_range(12, 20), "none", Color(0.75, 1.0, 0.9))
+		if i % 2 == 0:
+			B.prop("tree_spiral", p, t, r.randf_range(12, 20), "none", Color(0.75, 1.0, 0.9))
 		B.prop("mushroom", p * 0.93, t, r.randf_range(10, 16), "none", Color(1.2, 0.7, 1.1))
 	# --- ponds (bioluminescent)
 	var ponds := [[Vector3(-18, 0, -8), 9.0], [Vector3(62, 0, 5), 7.0], [Vector3(-60, 0, 28), 8.0], [Vector3(20, 0, 62), 6.0]]
@@ -235,9 +236,9 @@ func _felucia() -> void:
 		keep.append([pd[0], pd[1] + 3.0])
 	_scatter("mushroom", 26, Rect2(-88, -88, 176, 176), 7.0, 15.0, "cyl", Color(1.3, 0.75, 1.2), keep, 0.1)
 	_scatter("mushroom", 30, Rect2(-88, -88, 176, 176), 1.2, 2.5, "none", Color(0.7, 1.5, 1.4), keep)
-	_scatter("tree_spiral", 14, Rect2(-88, -88, 176, 176), 6.0, 11.0, "cyl", Color(0.8, 1.1, 1.0), keep, 0.12)
-	_scatter("tree_blob", 10, Rect2(-88, -88, 176, 176), 5.0, 9.0, "cyl", Color(0.85, 1.2, 0.9), keep, 0.12)
-	_scatter("plant", 70, Rect2(-90, -90, 180, 180), 0.8, 2.0, "none", Color(0.8, 1.2, 0.9), [])
+	_scatter("tree_spiral", 10, Rect2(-88, -88, 176, 176), 6.0, 11.0, "cyl", Color(0.8, 1.1, 1.0), keep, 0.12)
+	_scatter("tree_blob", 5, Rect2(-88, -88, 176, 176), 5.0, 9.0, "cyl", Color(0.85, 1.2, 0.9), keep, 0.12)
+	_scatter("plant", 45, Rect2(-90, -90, 180, 180), 0.8, 2.0, "none", Color(0.8, 1.2, 0.9), [])
 	_scatter("rock_large", 10, Rect2(-88, -88, 176, 176), 1.6, 3.2, "box", Color(0.6, 0.75, 0.7), keep)
 	B.spawn_points.append_array([Vector3(-85, 0, -85), Vector3(0, 0, -86), Vector3(85, 0, -80), Vector3(-86, 0, 0), Vector3(86, 0, -20), Vector3(-80, 0, 80), Vector3(85, 0, 35), Vector3(-30, 0, 86)])
 

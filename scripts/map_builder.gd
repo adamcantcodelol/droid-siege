@@ -12,6 +12,10 @@ var _batches := {}     # key -> {"parts": Array, "xforms": Array}
 var _mats := {}
 var spawn_points: Array = []   # droid entry points (server picks from these)
 var occluders := 0
+var sun: DirectionalLight3D
+var env: Environment
+const SMALL := ["plant", "crate", "barrel", "light_floor", "sack_trench", "rock"]
+const CHUNK := 48.0
 
 
 func _init(world: Node, region: Node3D) -> void:
@@ -184,7 +188,8 @@ func prop(name: String, pos: Vector3, yaw: float = 0.0, height: float = 0.0, col
 	# sit the model's bottom on pos.y
 	var c0 := aabb.get_center()
 	var xf := Transform3D(basis, pos - basis * Vector3(c0.x, aabb.position.y, c0.z))
-	var key := name + "|" + tint.to_html()
+	var cell := Vector2i(floori(pos.x / CHUNK), floori(pos.z / CHUNK))
+	var key := name + "|" + tint.to_html() + "|" + str(cell)
 	if not _batches.has(key):
 		_batches[key] = {"name": name, "tint": tint, "xforms": []}
 	_batches[key]["xforms"].append(xf)
@@ -215,7 +220,7 @@ func flush(vis_end: float = 0.0) -> void:
 				mm.set_instance_transform(i, bt["xforms"][i] * part["xf"])
 			var mmi := MultiMeshInstance3D.new()
 			mmi.multimesh = mm
-			mmi.name = "MM_" + bt["name"]
+			mmi.name = ("MM_small_" if bt["name"] in SMALL else "MM_") + bt["name"]
 			if tint != Color.WHITE:
 				var m0: Material = part["mesh"].surface_get_material(0)
 				if m0 is BaseMaterial3D:
@@ -353,4 +358,6 @@ func environment(d: Dictionary) -> DirectionalLight3D:
 	sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_2_SPLITS
 	sun.directional_shadow_max_distance = 70.0
 	w.add_child(sun)
+	self.sun = sun
+	self.env = env
 	return sun

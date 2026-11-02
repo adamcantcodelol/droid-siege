@@ -100,3 +100,9 @@ All three maps are hand-laid-out in `scripts/maps.gd` using CC0 model kits (`mod
 Each map defines team spawns (Versus), droid entry points (co-op enemy waves spawn from these), and high-ground checks.
 Performance: repeated props are batched into MultiMeshInstance3D (≈17-23 draw batches per map), collision is primitive boxes/cylinders, omni lights have no shadows and fade at 60 m, the sun uses 2-split shadows to 70 m, big solids carry box occluders.
 `--test=mapcheck0/1/2` verifies the navmesh bakes and every post is reachable from the LZ, both team spawns, every droid entry point and the high ground.
+
+## Weapons, enemies, graphics (latest)
+- **Weapons:** slot 1 DC-15A rifle, slot 2 DP-23 scatter blaster (8 pellets, 6-shell mag). Switch with **1 / 2**, the **mouse wheel**, or **X / C** (keyboard mode).
+- **OOM Commander** (yellow droid, from wave 2): droids within 12 m of it fire 43% faster and hit 25% harder. Kill it first.
+- **Characters:** animated CC0 Quaternius models (clone = soldier, B1/commander = robot, B2 = mech), team-tinted in Versus, animations synced.
+- **Graphics setting** (Options → Graphics: Auto/Low/Medium/High). Auto = Low on web and integrated GPUs (Surface Pro 9), High on NVIDIA/discrete. Low: 70% render scale, 1-split shadows to 35 m, no glow/MSAA, 150 rain drops, small props culled at 45 m, no droid shadows, far animation LOD.

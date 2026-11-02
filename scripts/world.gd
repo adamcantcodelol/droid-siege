@@ -97,6 +97,7 @@ func _ready() -> void:
 		_add_player(multiplayer.get_unique_id(), players.size())
 	hud = HudScript.new()
 	add_child(hud)
+	Game.apply_quality()
 	if not Game.is_headless():
 		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 	if multiplayer.is_server():
@@ -104,6 +105,8 @@ func _ready() -> void:
 			on_peer_ready(1)
 	else:
 		Game.rpc_id(1, "client_world_ready")
+	if Game.test_mode.begins_with("bench"):
+		_bench.call_deferred()
 	if Game.test_mode.begins_with("mapcheck"):
 		_test_mapcheck.call_deferred()
 	show_message("%s (%s): squad deployed! Head for Command Post ALPHA." % [M["name"], DIFF["name"]])
@@ -627,6 +630,8 @@ func _create_enemy(id: int, etype: int, pos: Vector3):
 	e.position = pos
 	enemies_root.add_child(e)
 	enemies[id] = e
+	if e.char_model != null and Game.quality() == 0:
+		e.char_model.set_shadows(false)
 	return e
 
 
@@ -1258,3 +1263,62 @@ func _test_weapons(_delta: float, lp) -> void:
 				print("[test] weapons: back to slot %d mag %d/%d" % [lp.weapon + 1, lp.mag, lp.mag_size])
 				Game.finish_test(lp.weapon == 0 and dmg > 25.0 and buff and anim_ok, "WEAPONS scatter blaster + switching + commander buff")
 				_t_stage = 3
+
+
+## Frame-time benchmark: 16 droids fighting in front of the player at the LZ, 8 s sample.
+func _bench() -> void:
+	await get_tree().create_timer(2.0).timeout
+	spawn_cd = 9999.0
+	var lp = local_player()
+	lp.god = true
+	lp.rotation.y = atan2(lp.global_position.x - POSTS[0].x, lp.global_position.z - POSTS[0].z)
+	for i in 16:
+		var a := -0.6 + 1.2 * float(i) / 15.0
+		var d := 20.0 + float(i % 4) * 8.0
+		var dir: Vector3 = (POSTS[0] - LZ).normalized().rotated(Vector3.UP, a)
+		var pos: Vector3 = NavigationServer3D.map_get_closest_point(get_world_3d().navigation_map, LZ + dir * d)
+		_create_enemy(next_enemy_id, [0, 0, 1, 3, 0, 2][i % 6], pos + Vector3(0, 0.5, 0))
+		next_enemy_id += 1
+	await get_tree().create_timer(1.0).timeout
+	var frames := []
+	var dc := 0.0
+	var prims := 0.0
+	var phys := 0.0
+	var t0 := Time.get_ticks_usec()
+	var last := t0
+	while Time.get_ticks_usec() - t0 < 8000000:
+		await get_tree().process_frame
+		var now := Time.get_ticks_usec()
+		frames.append((now - last) / 1000.0)
+		last = now
+		dc += Performance.get_monitor(Performance.RENDER_TOTAL_DRAW_CALLS_IN_FRAME)
+		prims += Performance.get_monitor(Performance.RENDER_TOTAL_PRIMITIVES_IN_FRAME)
+		phys += Performance.get_monitor(Performance.TIME_PHYSICS_PROCESS) * 1000.0
+	var n := frames.size()
+	var sorted := frames.duplicate()
+	sorted.sort()
+	var avg := 0.0
+	for f in frames:
+		avg += f
+	avg /= n
+	print("[test] BENCH %s quality=%s: frames=%d avg=%.1fms p95=%.1fms fps=%.1f draw_calls=%.0f primitives=%.0f physics=%.2fms enemies=%d" % [
+		M["name"], Game.quality_name(), n, avg, sorted[int(n * 0.95)], 1000.0 / avg, dc / n, prims / n, phys / n, enemies.size()])
+	Game.finish_test(true, "BENCH")
+
+
+func apply_quality(q: int) -> void:
+	if builder != null and builder.sun != null:
+		builder.sun.shadow_enabled = true
+		builder.sun.directional_shadow_mode = DirectionalLight3D.SHADOW_ORTHOGONAL if q == 0 else DirectionalLight3D.SHADOW_PARALLEL_2_SPLITS
+		builder.sun.directional_shadow_max_distance = [35.0, 50.0, 70.0][q]
+	if builder != null and builder.env != null:
+		builder.env.glow_enabled = q == 2
+	if rain != null:
+		rain.amount = [150, 300, 600][q]
+	if builder != null:
+		for n in builder.deco.get_children():
+			if n is MultiMeshInstance3D and n.name.begins_with("MM_small"):
+				n.visibility_range_end = [45.0, 70.0, 0.0][q]
+	for e in enemies.values():
+		if e.char_model != null:
+			e.char_model.set_shadows(q > 0)
