@@ -393,6 +393,7 @@ func _add_player(pid: int, index: int) -> void:
 	if versus:
 		p.team = int(Game.players[pid]["team"]) if Game.players.has(pid) and Game.players[pid].has("team") else (index if ffa else _balanced_team())
 		p.position = _spawn_for(p.team, index)
+		p.rotation.y = atan2(p.position.x, p.position.z)  # face the middle of the map
 	players_root.add_child(p)
 	players[pid] = p
 	if not pvp_scores.has(pid):

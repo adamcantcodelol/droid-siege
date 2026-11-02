@@ -453,6 +453,7 @@ func take_damage(dmg: float, from = null) -> void:
 
 func respawn() -> void:
 	global_position = Game.world.spawn_point(peer_id)
+	rotation.y = atan2(global_position.x, global_position.z)
 	velocity = Vector3.ZERO
 	health = max_health
 	state = 0

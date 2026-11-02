@@ -761,7 +761,7 @@ func _start_test() -> void:
 			print("[test] server hosting on %d err='%s'" % [DEFAULT_PORT + 1, e])
 		"pvp_server":
 			player_name = "RedHost"
-			settings = {"map": 0, "diff": 1, "mode": 1}
+			settings = {"map": 1, "diff": 1, "mode": 0}
 			print("[test] pvp server err='%s'" % host_game(DEFAULT_PORT + 2))
 		"pvp_client":
 			player_name = "BlueClient"
@@ -788,7 +788,7 @@ func _start_test() -> void:
 		"shot":
 			await get_tree().create_timer(2.5).timeout
 			await _save_shot("/tmp/ds_menu.png")
-			settings = {"map": 0, "diff": 1, "mode": 1}
+			settings = {"map": 1, "diff": 1, "mode": 0}
 			start_singleplayer()
 			await get_tree().create_timer(9.0).timeout
 			_save_shot("/tmp/ds_game.png")
