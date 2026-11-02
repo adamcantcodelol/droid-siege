@@ -97,7 +97,6 @@ func _ready() -> void:
 		_add_player(multiplayer.get_unique_id(), players.size())
 	hud = HudScript.new()
 	add_child(hud)
-	Game.play_music("battle")
 	if not Game.is_headless():
 		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 	if multiplayer.is_server():

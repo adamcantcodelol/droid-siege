@@ -23,7 +23,6 @@ func _ready() -> void:
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 	Game.in_mission = false
 	get_tree().paused = false
-	Game.play_music("menu")
 	var bg := ColorRect.new()
 	bg.color = Color(0.1, 0.07, 0.05)
 	bg.set_anchors_preset(Control.PRESET_FULL_RECT)

@@ -15,4 +15,3 @@ Downloaded as GLB from poly.pizza mirrors of the original packs.
 Code, levels, generated sounds: original to this project.
 Engine: Godot 4 (MIT).
 
-Music (`audio/battle.ogg`, `audio/menu.ogg`): original, synthesized by `tools/make_music.py` (CC0 for this project).

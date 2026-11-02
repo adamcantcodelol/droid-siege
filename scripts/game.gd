@@ -148,16 +148,6 @@ func build_control_options(box: Control) -> void:
 	af.toggled.connect(func(on): auto_fire = on; write_save())
 	extra.add_child(af)
 	extra.visible = control_mode == 1
-	var ml := Label.new()
-	ml.text = "Music volume"
-	box.add_child(ml)
-	var ms := HSlider.new()
-	ms.min_value = 0.0
-	ms.max_value = 1.0
-	ms.step = 0.05
-	ms.value = float(save.get("music", 0.6))
-	ms.value_changed.connect(func(v): save["music"] = v; _apply_music_volume(); write_save())
-	box.add_child(ms)
 	opt.item_selected.connect(func(i): control_mode = i; extra.visible = i == 1; write_save())
 
 
@@ -208,7 +198,7 @@ func _bind(action: String, keys: Array, mouse_button: int = 0) -> void:
 # ---------------------------------------------------------------- save / upgrades
 func default_save() -> Dictionary:
 	return {"credits": 0, "dmg": 0, "rate": 0, "mag": 0, "armor": 0, "grenades": 2,
-		"missions": 0, "wins": 0, "name": "Trooper", "sens": 0.0025, "map": 0, "diff": 1, "controls": 0, "turn_speed": 2.6, "auto_fire": false, "aim_assist": true, "ws_url": "", "relay_url": "", "mode": 0, "music": 0.6, "quality": -1}
+		"missions": 0, "wins": 0, "name": "Trooper", "sens": 0.0025, "map": 0, "diff": 1, "controls": 0, "turn_speed": 2.6, "auto_fire": false, "aim_assist": true, "ws_url": "", "relay_url": "", "mode": 0, "quality": -1}
 
 
 func load_save() -> void:
@@ -286,34 +276,6 @@ func mag_size() -> int:
 
 func max_health() -> float:
 	return 100.0 + 25.0 * int(save["armor"])
-
-
-# ---------------------------------------------------------------- music
-var _music: AudioStreamPlayer
-var _music_name := ""
-
-
-func play_music(mname: String) -> void:
-	if is_headless() or mname == _music_name:
-		return
-	_music_name = mname
-	if _music == null:
-		_music = AudioStreamPlayer.new()
-		add_child(_music)
-	var st = load("res://audio/%s.ogg" % mname)
-	if st is AudioStreamOggVorbis:
-		st.loop = true
-	_music.stream = st
-	_apply_music_volume()
-	_music.play()
-
-
-func _apply_music_volume() -> void:
-	if _music == null:
-		return
-	var v := float(save.get("music", 0.6))
-	_music.volume_db = linear_to_db(maxf(v, 0.0001)) - 8.0
-	_music.stream_paused = v <= 0.01
 
 
 # ---------------------------------------------------------------- sounds (generated tones)
