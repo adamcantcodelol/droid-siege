@@ -8,7 +8,9 @@ var health_label: Label
 var ammo_label: Label
 var squad_label: Label
 var msg_label: Label
-var cross: Label
+var cross: Control
+var cap_bar: ProgressBar
+var cap_label: Label
 var revive_bar: ProgressBar
 var revive_label: Label
 var down_label: Label
@@ -59,31 +61,39 @@ func _ready() -> void:
 	ammo_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	ammo_label.size = Vector2(280, 80)
 
-	cross = _label(root, 28, Vector2.ZERO, Control.PRESET_CENTER)
-	cross.text = "+"
-	cross.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	cross.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	cross.size = Vector2(40, 40)
-	cross.position = Vector2(-20, -20)
+	cross = preload("res://scripts/crosshair.gd").new()
+	root.add_child(cross)
 
-	msg_label = _label(root, 26, Vector2(-400, 90), Control.PRESET_CENTER_TOP)
-	msg_label.size = Vector2(800, 80)
+	cap_label = _label(root, 22, Vector2.ZERO)
+	_anchor(cap_label, 0.5, 0.0, -300, 120, 600, 30)
+	cap_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	cap_bar = ProgressBar.new()
+	cap_bar.max_value = 1.0
+	cap_bar.show_percentage = false
+	cap_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var cfill := StyleBoxFlat.new()
+	cfill.bg_color = Color(1.0, 0.75, 0.2)
+	cap_bar.add_theme_stylebox_override("fill", cfill)
+	root.add_child(cap_bar)
+	_anchor(cap_bar, 0.5, 0.0, -180, 155, 360, 16)
+
+	msg_label = _label(root, 26, Vector2.ZERO)
+	_anchor(msg_label, 0.5, 0.0, -400, 180, 800, 80)
 	msg_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	msg_label.autowrap_mode = TextServer.AUTOWRAP_WORD
 
-	revive_label = _label(root, 20, Vector2(-200, 50), Control.PRESET_CENTER)
-	revive_label.size = Vector2(400, 30)
+	revive_label = _label(root, 20, Vector2.ZERO)
+	_anchor(revive_label, 0.5, 0.5, -200, 50, 400, 30)
 	revive_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	revive_bar = ProgressBar.new()
-	revive_bar.set_anchors_preset(Control.PRESET_CENTER)
-	revive_bar.position = Vector2(-120, 85)
-	revive_bar.size = Vector2(240, 14)
+	revive_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	revive_bar.show_percentage = false
 	revive_bar.max_value = 1.0
 	root.add_child(revive_bar)
+	_anchor(revive_bar, 0.5, 0.5, -120, 85, 240, 14)
 
-	down_label = _label(root, 34, Vector2(-400, -140), Control.PRESET_CENTER)
-	down_label.size = Vector2(800, 100)
+	down_label = _label(root, 34, Vector2.ZERO)
+	_anchor(down_label, 0.5, 0.5, -400, -160, 800, 100)
 	down_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	down_label.add_theme_color_override("font_color", Color(1, 0.35, 0.3))
 
@@ -95,9 +105,9 @@ func _ready() -> void:
 	root.add_child(feed_box)
 
 	dmg_ind = Control.new()
-	dmg_ind.set_anchors_preset(Control.PRESET_CENTER)
-	dmg_ind.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	root.add_child(dmg_ind)
+	_anchor(dmg_ind, 0.5, 0.5, 0, 0, 0, 0)
+	dmg_ind.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	dmg_poly = Polygon2D.new()
 	dmg_poly.polygon = PackedVector2Array([Vector2(-26, -95), Vector2(26, -95), Vector2(0, -125)])
 	dmg_poly.color = Color(1, 0.15, 0.1, 0.0)
@@ -105,6 +115,18 @@ func _ready() -> void:
 
 	_build_pause(root)
 	_build_end(root)
+
+
+## Explicit anchor + offsets so placement never depends on the parent's size at creation time.
+func _anchor(c: Control, ax: float, ay: float, ox: float, oy: float, w: float, h: float) -> void:
+	c.anchor_left = ax
+	c.anchor_right = ax
+	c.anchor_top = ay
+	c.anchor_bottom = ay
+	c.offset_left = ox
+	c.offset_right = ox + w
+	c.offset_top = oy
+	c.offset_bottom = oy + h
 
 
 func _label(parent: Control, size: int, pos: Vector2, preset: int = Control.PRESET_TOP_LEFT) -> Label:
@@ -160,6 +182,7 @@ func _build_pause(root: Control) -> void:
 	sens_slider.value = Game.mouse_sensitivity
 	sens_slider.value_changed.connect(func(v): Game.mouse_sensitivity = v)
 	box.add_child(sens_slider)
+	Game.build_control_options(box)
 	_button(box, "Resume", _resume)
 	_button(box, "Leave Mission", func(): Game.write_save(); Game.return_to_menu(""))
 	pause_panel.visible = false
@@ -220,7 +243,7 @@ func show_message(text: String) -> void:
 
 func hit_marker(shielded: bool) -> void:
 	hit_time = 0.15
-	cross.add_theme_color_override("font_color", Color(0.4, 0.7, 1.0) if shielded else Color(1, 0.3, 0.2))
+	cross.color = Color(0.4, 0.7, 1.0) if shielded else Color(1, 0.3, 0.2)
 	Game.play_sfx("hit", null, -10.0)
 
 
@@ -271,7 +294,7 @@ func _process(delta: float) -> void:
 	msg_label.modulate.a = clampf(msg_time, 0.0, 1.0)
 	hit_time -= delta
 	if hit_time <= 0.0:
-		cross.remove_theme_color_override("font_color")
+		cross.color = Color(1, 1, 1, 0.95)
 	flash.color.a = maxf(0.0, flash.color.a - delta * 0.8)
 	dmg_time -= delta
 	var lpi = world.local_player()
@@ -285,13 +308,32 @@ func _process(delta: float) -> void:
 
 	# Objective
 	var lp = world.local_player()
+	if lp != null:
+		cross.aiming = lp.is_aiming
+		cross.on_target = lp.crosshair_on_enemy
+		cross.visible = lp.state == 0 and not end_panel.visible
 	var t := ""
+	cap_label.text = ""
+	cap_bar.visible = false
 	if world.phase < 3:
-		var center: Vector3 = world.POSTS[world.phase]
-		t = "OBJECTIVE: Capture Command Post %s  (%d/3)\nStand inside the ring. Capture: %d%%" % [
-			world.POST_NAMES[world.phase], world.phase, int(world.progress * 100.0)]
+		t = "OBJECTIVE: Capture all 3 command posts, any order  (%d/3)" % world.phase
 		if lp != null:
-			t += "\n" + _direction_text(lp, center)
+			var zone: int = world.post_at(lp.global_position)
+			if zone >= 0 and world.post_captured[zone]:
+				t += "\nPost %s is secured. Move to another post." % world.POST_NAMES[zone]
+			elif zone >= 0:
+				cap_bar.visible = true
+				cap_bar.value = world.post_progress[zone]
+				if world.post_contested[zone]:
+					cap_label.text = "POST %s CONTESTED - clear the droids! %d%%" % [world.POST_NAMES[zone], int(world.post_progress[zone] * 100.0)]
+					cap_label.add_theme_color_override("font_color", Color(1, 0.4, 0.3))
+				else:
+					cap_label.text = "CAPTURING POST %s: %d%%" % [world.POST_NAMES[zone], int(world.post_progress[zone] * 100.0)]
+					cap_label.add_theme_color_override("font_color", Color(1, 0.85, 0.3))
+			var near: int = world.nearest_open_post(lp.global_position)
+			if near >= 0 and zone < 0:
+				t += "\nNearest open post: %s (%d%%)  -  %s" % [world.POST_NAMES[near], int(world.post_progress[near] * 100.0),
+					_direction_text(lp, world.POSTS[near])]
 	elif world.phase == 3:
 		t = "SURVIVE! Gunship extraction in %ds" % int(ceil(world.timer))
 	t += "\nDroids destroyed: %d    Credits earned: %d    Droids active: %d" % [world.kills, world.earned,

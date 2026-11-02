@@ -21,7 +21,10 @@ var players := {}       # peer_id -> player node
 var enemies := {}       # enemy id -> enemy node
 var next_enemy_id := 1
 var phase := 0          # 0..2 = capturing post N, 3 = extraction, 4 = over
-var progress := 0.0
+var progress := 0.0      # progress of the post most recently worked on (legacy/HUD)
+var post_progress := [0.0, 0.0, 0.0]
+var post_captured := [false, false, false]
+var post_contested := [false, false, false]
 var timer := EXTRACT_TIME
 var kills := 0
 var earned := 0
@@ -58,7 +61,7 @@ func _ready() -> void:
 	DIFF = Game.DIFFICULTIES[clampi(int(Game.settings["diff"]), 0, Game.DIFFICULTIES.size() - 1)]
 	POSTS = M["posts"]
 	LZ = M["lz"]
-	if Game.test_mode in ["smoke", "smoke2", "smokefail"]:
+	if Game.test_mode in ["smoke", "smoke2", "smokefail", "walkcap", "kbtest"]:
 		test_speed = 4.0
 		Engine.time_scale = 3.0
 	players_root = _child_node("Players")
@@ -463,30 +466,37 @@ func _server_tick(delta: float) -> void:
 		_end_mission(false)
 		return
 
-	# Objectives
+	# Objectives: every uncaptured post can be captured, in any order. Plain distance
+	# checks against every alive player (no Area3D/collision layers involved).
 	if phase < 3:
-		var center: Vector3 = POSTS[phase]
-		var pin := 0
-		for p in players.values():
-			if p.state == 0 and _flat_dist(p.global_position, center) < CAPTURE_RADIUS:
-				pin += 1
-		var ein := 0
-		for e in enemies.values():
-			if _flat_dist(e.global_position, center) < CAPTURE_RADIUS:
-				ein += 1
-		if pin > 0 and ein <= pin:
-			progress += delta * (0.05 + 0.018 * (pin - 1)) * test_speed
-		elif pin == 0:
-			progress = maxf(0.0, progress - delta * 0.01)
-		if progress >= 1.0:
-			progress = 0.0
-			earned += int(150 * float(DIFF["credits"]))
-			phase += 1
-			if phase == 3:
-				timer = EXTRACT_TIME
-				Game.net_all("announce", ["All command posts captured! Survive until the gunship arrives!"])
-			else:
-				Game.net_all("announce", ["Post %s captured! Move to Command Post %s." % [POST_NAMES[phase - 1], POST_NAMES[phase]]])
+		for i in POSTS.size():
+			if post_captured[i]:
+				continue
+			var center: Vector3 = POSTS[i]
+			var pin := 0
+			for p in players.values():
+				if p.state == 0 and _flat_dist(p.global_position, center) < CAPTURE_RADIUS:
+					pin += 1
+			var ein := 0
+			for e in enemies.values():
+				if is_instance_valid(e) and e.hp > 0.0 and _flat_dist(e.global_position, center) < CAPTURE_RADIUS:
+					ein += 1
+			post_contested[i] = pin > 0 and ein > pin
+			if pin > 0 and ein <= pin:
+				post_progress[i] = minf(1.0, post_progress[i] + delta * (0.05 + 0.018 * (pin - 1)) * test_speed)
+				progress = post_progress[i]
+			elif pin == 0:
+				post_progress[i] = maxf(0.0, post_progress[i] - delta * 0.01)
+			if post_progress[i] >= 1.0:
+				post_captured[i] = true
+				post_contested[i] = false
+				earned += int(150 * float(DIFF["credits"]))
+				phase += 1
+				if phase == 3:
+					timer = EXTRACT_TIME
+					Game.net_all("announce", ["All command posts captured! Survive until the gunship arrives!"])
+				else:
+					Game.net_all("announce", ["Post %s captured! %d to go." % [POST_NAMES[i], 3 - phase]])
 	elif phase == 3:
 		timer -= delta * test_speed
 		if timer <= 0.0:
@@ -526,7 +536,35 @@ func _server_tick(delta: float) -> void:
 	obj_cd -= delta
 	if obj_cd <= 0.0:
 		obj_cd = 0.2
-		Game.net_all("objective_state", [phase, progress, timer, kills, enemies.size(), earned])
+		var cap_mask := 0
+		var con_mask := 0
+		for i in 3:
+			if post_captured[i]:
+				cap_mask |= 1 << i
+			if post_contested[i]:
+				con_mask |= 1 << i
+		Game.net_all("objective_state", [phase, Vector3(post_progress[0], post_progress[1], post_progress[2]),
+			cap_mask, con_mask, timer, kills, enemies.size(), earned])
+
+
+func post_at(pos: Vector3) -> int:
+	for i in POSTS.size():
+		if _flat_dist(pos, POSTS[i]) < CAPTURE_RADIUS:
+			return i
+	return -1
+
+
+func nearest_open_post(pos: Vector3) -> int:
+	var best := -1
+	var bd := INF
+	for i in POSTS.size():
+		if post_captured[i]:
+			continue
+		var d := _flat_dist(pos, POSTS[i])
+		if d < bd:
+			bd = d
+			best = i
+	return best
 
 
 func _flat_dist(a: Vector3, b: Vector3) -> float:
@@ -547,7 +585,11 @@ func _pick_type() -> int:
 
 
 func _spawn_enemy() -> void:
-	var focus: Vector3 = POSTS[mini(phase, 2)] if phase < 3 else LZ
+	var focus: Vector3 = LZ
+	if phase < 3:
+		var lp0 = players.values()[0] if players.size() > 0 else null
+		var np := nearest_open_post(lp0.global_position if lp0 != null else LZ)
+		focus = POSTS[maxi(np, 0)]
 	var pos := Vector3.ZERO
 	for attempt in 12:
 		var ang := rng.randf() * TAU
@@ -683,12 +725,15 @@ func _spawn_debris(pos: Vector3, etype: int) -> void:
 		tw.chain().tween_callback(mi.queue_free)
 
 
-func apply_objective(ph: int, prog: float, t: float, k: int, ne: int, e: int) -> void:
+func apply_objective(ph: int, prog: Vector3, cap_mask: int, con_mask: int, t: float, k: int, ne: int, e: int) -> void:
 	if ph != last_phase and ph > last_phase:
 		Game.play_sfx("capture")
 	last_phase = ph
 	phase = ph
-	progress = prog
+	for i in 3:
+		post_progress[i] = prog[i]
+		post_captured[i] = (cap_mask & (1 << i)) != 0
+		post_contested[i] = (con_mask & (1 << i)) != 0
 	timer = t
 	kills = k
 	enemy_count = ne
@@ -797,12 +842,16 @@ func _update_visuals(delta: float) -> void:
 		var v: Dictionary = post_visuals[i]
 		var col := Color(0.8, 0.2, 0.15)
 		var h := 1.5
-		if i < phase:
+		var target_h := 1.5 + float(post_progress[i]) * 5.5
+		if post_captured[i]:
 			col = Color(0.2, 0.45, 1.0)
-			h = 7.0
-		elif i == phase:
+			target_h = 7.0
+		elif post_contested[i]:
+			col = Color(1.0, 0.45, 0.1) if int(Time.get_ticks_msec() / 250) % 2 == 0 else Color(0.8, 0.2, 0.15)
+		elif post_progress[i] > 0.0:
 			col = Color(1.0, 0.75, 0.2)
-			h = 1.5 + progress * 5.5
+		var cur: Vector3 = v["flag"].position
+		h = lerpf(cur.y - float(v["center"].y), target_h, minf(1.0, delta * 6.0))
 		v["ring_mat"].albedo_color = Color(col.r, col.g, col.b, 0.45)
 		v["ring_mat"].emission = col
 		v["flag_mat"].albedo_color = col
@@ -820,16 +869,22 @@ func _update_visuals(delta: float) -> void:
 
 # ------------------------------------------------------------------ headless test autopilot
 func _test_autopilot(delta: float) -> void:
-	if Game.test_mode not in ["smoke", "smoke2", "smokefail"]:
+	if Game.test_mode not in ["smoke", "smoke2", "smokefail", "walkcap", "kbtest"]:
 		return
 	test_elapsed += delta
 	var lp = local_player()
 	if lp == null:
 		return
+	if Game.test_mode == "walkcap":
+		_test_walkcap(delta, lp)
+		return
+	if Game.test_mode == "kbtest":
+		_test_keyboard(delta, lp)
+		return
 	if Game.test_mode in ["smoke", "smoke2"]:
 		lp.god = true
 		if phase < 3:
-			lp.global_position = POSTS[phase] + Vector3(1, 0.5, 1)
+			lp.global_position = POSTS[nearest_open_post(lp.global_position)] + Vector3(1, 0.5, 1)
 			lp.velocity = Vector3.ZERO
 		test_cd -= delta
 		if test_cd <= 0.0 and enemies.size() > 0:
@@ -841,3 +896,100 @@ func _test_autopilot(delta: float) -> void:
 			explode(lp.global_position + Vector3(0, 0, -3), 1)
 	elif Game.test_mode == "smokefail" and test_elapsed > 3.0 and lp.state == 0:
 		lp.take_damage(99999.0, lp.global_position + Vector3(5, 0, 0))
+
+
+var _t_start := Vector3.ZERO
+var _t_stage := 0
+var _t_val := 0.0
+var _t_mark := 0.0
+var _t_enemy = null
+
+
+## Walk (real physics, real input action) from outside BRAVO's wall, through the doorway, into the ring.
+func _test_walkcap(_delta: float, lp) -> void:
+	lp.god = true
+	var post := 1
+	var center: Vector3 = POSTS[post]
+	if _t_stage == 0:
+		lp.global_position = center + Vector3(0, 0.5, 11.5)
+		lp.rotation.y = 0.0
+		lp.velocity = Vector3.ZERO
+		_t_start = lp.global_position
+		_t_stage = 1
+		return
+	for e in enemies.values().duplicate():
+		if _flat_dist(e.global_position, center) < 20.0:
+			damage_enemy(e.eid, 9999.0, center, 1, false)
+	var d := _flat_dist(lp.global_position, center)
+	if d > 2.5:
+		Input.action_press("move_forward")
+	else:
+		Input.action_release("move_forward")
+	var flag_h: float = post_visuals[post]["flag"].position.y - center.y
+	if post_progress[post] > 0.25:
+		Input.action_release("move_forward")
+		var walked := _flat_dist(_t_start, lp.global_position)
+		print("[test] walkcap: walked %.1fm, in ring dist %.1fm, BRAVO progress %.2f, flag height %.2f, contested=%s" % [walked, d, post_progress[post], flag_h, post_contested[post]])
+		Game.finish_test(walked > 7.0 and flag_h > 2.0, "WALKCAP progress rises from real movement")
+	elif test_elapsed > 40.0:
+		print("[test] walkcap: stuck at dist %.1f progress %.2f pos %s" % [d, post_progress[post], lp.global_position])
+		Game.finish_test(false, "WALKCAP timeout")
+
+
+## Keyboard-only controls: turn with the turn action, fire with kb_fire, and aim assist pulls toward a droid.
+func _test_keyboard(_delta: float, lp) -> void:
+	lp.god = true
+	match _t_stage:
+		0:
+			_t_val = lp.rotation.y
+			Input.action_press("turn_right")
+			_t_mark = test_elapsed
+			_t_stage = 1
+		1:
+			if test_elapsed - _t_mark > 0.5:
+				Input.action_release("turn_right")
+				var turned := absf(angle_difference(_t_val, lp.rotation.y))
+				print("[test] kbtest: turned %.2f rad" % turned)
+				if turned < 0.3:
+					Game.finish_test(false, "KBTEST turning")
+					return
+				_t_val = float(lp.mag)
+				Input.action_press("kb_fire")
+				_t_mark = test_elapsed
+				_t_stage = 2
+		2:
+			if test_elapsed - _t_mark > 0.4:
+				Input.action_release("kb_fire")
+				print("[test] kbtest: mag %d -> %d" % [int(_t_val), lp.mag])
+				if lp.mag >= int(_t_val):
+					Game.finish_test(false, "KBTEST firing")
+					return
+				# put a droid 6 degrees off the crosshair, 15 m away, on open ground
+				for e in enemies.values().duplicate():
+					damage_enemy(e.eid, 9999.0, Vector3.ZERO, 1, false)
+				spawn_cd = 999.0
+				lp.global_position = Vector3(0, 0.5, LZ.z - 2.0)
+				lp.rotation.y = 0.0
+				lp.pitch = 0.0
+				var dir := Vector3(sin(deg_to_rad(-6.0)), 0, -cos(deg_to_rad(6.0)))
+				_t_enemy = _create_enemy(next_enemy_id, 0, lp.global_position + dir * 15.0)
+				next_enemy_id += 1
+				_t_enemy.fire_cd = 999.0
+				_t_mark = test_elapsed
+				_t_stage = 3
+		3:
+			if test_elapsed - _t_mark > 0.25 and _t_val >= 0.0:
+				_t_val = -1.0
+				_t_mark = test_elapsed
+				_t_start = Vector3(_cam_angle_to(lp, _t_enemy), 0, 0)
+			elif _t_val < 0.0 and test_elapsed - _t_mark > 1.0:
+				var after := _cam_angle_to(lp, _t_enemy)
+				print("[test] kbtest: aim assist angle %.1f deg -> %.1f deg" % [rad_to_deg(_t_start.x), rad_to_deg(after)])
+				Game.finish_test(after < _t_start.x * 0.7 or after < deg_to_rad(1.5), "KBTEST turn+fire+aim-assist")
+
+
+func _cam_angle_to(lp, e) -> float:
+	if e == null or not is_instance_valid(e):
+		return 0.0
+	var d: Vector3 = e.global_position + Vector3(0, 1.2, 0) - lp.cam.global_position
+	return (-lp.cam.global_transform.basis.z).angle_to(d)
