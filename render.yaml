@@ -1,0 +1,12 @@
+# Render.com blueprint for the Droid Siege room-code relay (free plan).
+# New > Blueprint > pick this repo. Or New > Web Service: root dir "relay",
+# build "npm install", start "node relay.js".
+services:
+  - type: web
+    name: droid-siege-relay
+    runtime: node
+    plan: free
+    rootDir: relay
+    buildCommand: npm install
+    startCommand: node relay.js
+    healthCheckPath: /

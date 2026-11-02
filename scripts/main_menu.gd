@@ -207,14 +207,14 @@ func _build_mp(holder: Control) -> Control:
 	if Game.is_web():
 		_lbl(adv, "Direct IP (ENet) is only available in the desktop version.", 13)
 		direct.visible = false
-	_lbl(direct, "Direct IP (LAN or Tailscale) - UDP port:", 13)
+	_lbl(direct, "Direct IP (same Wi-Fi only) - UDP port:", 13)
 	port_edit = LineEdit.new()
 	port_edit.text = str(Game.DEFAULT_PORT)
 	direct.add_child(port_edit)
 	_btn(direct, "Host Direct (no code)", _on_host)
 	ip_edit = LineEdit.new()
 	ip_edit.text = "127.0.0.1"
-	ip_edit.placeholder_text = "Host IP, e.g. 192.168.1.20 or a Tailscale 100.x.y.z"
+	ip_edit.placeholder_text = "Host LAN IP, e.g. 192.168.1.20"
 	direct.add_child(ip_edit)
 	_btn(direct, "Join Direct IP", _on_join)
 	_btn(box, "Back", func(): _show("main"))
@@ -382,7 +382,7 @@ func _refresh_lobby() -> void:
 		var ips := PackedStringArray()
 		for a in IP.get_local_addresses():
 			if a.count(".") == 3 and not a.begins_with("127.") and not a.begins_with("169.254"):
-				ips.append(a + ("  (Tailscale)" if a.begins_with("100.") else ""))
+				ips.append(a)
 		lobby_info.text = "Your IP addresses (share one):\n%s\nPort %s. Map and difficulty come from your main menu choice. Late joiners drop in at the landing zone. Press Start when your squad is in." % ["\n".join(ips), port_edit.text]
 	elif Game.server_is_dedicated:
 		lobby_info.text = "Online server. Any trooper can press Start Mission (uses your map/difficulty choice)."

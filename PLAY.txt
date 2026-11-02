@@ -1,0 +1,27 @@
+DROID SIEGE - quick start (Windows)
+===================================
+1. Unzip the whole folder anywhere (Desktop is fine).
+2. Double-click DroidSiege.exe. If Windows SmartScreen says "Windows protected your PC",
+   click "More info" > "Run anyway" (the game isn't code-signed).
+3. Type your trooper name, then play Singleplayer or Multiplayer.
+
+MULTIPLAYER WITH A ROOM CODE (default - nothing else to install, no port forwarding)
+- Anyone can host from inside the game: Multiplayer > "Host Game (get a room code)". A 5-character code like K7QXM appears
+  in the lobby. Send it to your friends.
+- Friends: Multiplayer > type the code > "Join with Code".
+- Host picks the Mode in the lobby (Co-op, Team Deathmatch, Free-for-All) and presses Start.
+- This uses the relay server. If the lobby says "No relay server set", open Advanced and
+  paste the relay address your host gave you (wss://...). See README "Room-code relay".
+  A free relay that has been asleep can take up to a minute to wake up.
+
+DIRECT IP (Advanced, same Wi-Fi only, works without the relay)
+- Same Wi-Fi: Host clicks Advanced > "Host Direct (no code)". Friends type the host's LAN IP
+  (shown in the lobby, e.g. 192.168.1.20) and click "Join Direct IP". UDP port 7777.
+  Allow DroidSiege through Windows Firewall when asked.
+
+CONTROLS
+- Mouse + Keyboard: WASD move, mouse look, left click fire, right click aim, Shift sprint,
+  Space jump, R reload, G grenade, hold E revive, Tab scoreboard (Versus), Esc pause.
+- Trackpad / Keyboard Only (pick in main menu or pause menu): WASD move, Arrows or J/L turn,
+  I/K look up/down, F or Ctrl fire (trackpad tap fires too), Q or Alt toggle aim,
+  optional aim assist and auto-fire.

@@ -767,7 +767,7 @@ func _start_test() -> void:
 		"shot":
 			await get_tree().create_timer(2.5).timeout
 			await _save_shot("/tmp/ds_menu.png")
-			settings = {"map": 1, "diff": 1}
+			settings = {"map": 0, "diff": 1, "mode": 1}
 			start_singleplayer()
 			await get_tree().create_timer(9.0).timeout
 			_save_shot("/tmp/ds_game.png")
