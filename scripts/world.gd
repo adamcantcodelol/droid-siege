@@ -490,8 +490,19 @@ func _server_tick(delta: float) -> void:
 			return
 
 	# Enemy AI
+	# AI budget: droids >55 m from every trooper think at 1/3 rate (accumulated delta, staggered by id)
+	var fr := Engine.get_physics_frames()
 	for e in enemies.values():
-		e.server_tick(delta, self)
+		e._think_acc += delta
+		var far := true
+		for p in players.values():
+			if p.global_position.distance_squared_to(e.global_position) < 3025.0:
+				far = false
+				break
+		if far and (fr + e.eid) % 3 != 0:
+			continue
+		e.server_tick(e._think_acc, self)
+		e._think_acc = 0.0
 
 	# Waves
 	var n := players.size()
@@ -511,7 +522,7 @@ func _server_tick(delta: float) -> void:
 	# Sync
 	sync_cd -= delta
 	if sync_cd <= 0.0:
-		sync_cd = 0.05
+		sync_cd = 0.1   # 10 Hz enemy snapshots (was 20 Hz); clients interpolate between them
 		var data := PackedFloat32Array()
 		for e in enemies.values():
 			data.append_array(e.pack_state())

@@ -312,7 +312,7 @@ func _physics_process(delta: float) -> void:
 
 	sync_cd -= delta
 	if sync_cd <= 0.0:
-		sync_cd = 0.05
+		sync_cd = 0.066  # 15 Hz player state (was 20 Hz)
 		anim_flags = (1 if shot_t > 0.0 else 0) | (2 if is_aiming else 0) | (4 if is_sprinting else 0) | (8 if not is_on_floor() else 0) | (weapon << 4)
 		Game.net_all("player_state", [position, rotation.y, pitch, health, state | (anim_flags << 2)], false)
 

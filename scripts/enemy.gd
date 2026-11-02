@@ -26,6 +26,9 @@ var net_pos := Vector3.ZERO
 var net_rot := 0.0
 var agent: NavigationAgent3D
 var repath := 0.0
+var los_cd := 0.0
+var los_cache := true
+var _think_acc := 0.0
 
 var model: Node3D
 var ball: MeshInstance3D
@@ -223,7 +226,12 @@ func server_tick(delta: float, world) -> void:
 	to.y = 0.0
 	var dist := to.length()
 	var eye := global_position + Vector3(0, 1.5, 0)
-	var los: bool = world.has_los(eye, target.global_position + Vector3(0, 1.2, 0))
+	# LOS raycast throttled to 5 Hz (staggered by id) instead of every physics tick
+	los_cd -= delta
+	if los_cd <= 0.0:
+		los_cd = 0.2 + (eid % 5) * 0.01
+		los_cache = world.has_los(eye, target.global_position + Vector3(0, 1.2, 0))
+	var los: bool = los_cache
 	var want_move: bool = dist > stats["range"] * (0.85 if etype == 3 else 0.7) or not los
 	var speed: float = stats["speed"]
 	if etype == 2:
@@ -260,7 +268,7 @@ func _nav_dir(delta: float, goal: Vector3, fallback: Vector3) -> Vector3:
 		return fallback
 	repath -= delta
 	if repath <= 0.0:
-		repath = 0.5
+		repath = 0.5 + (eid % 7) * 0.05   # staggered so repaths don't all land on one frame
 		agent.target_position = goal
 	if agent.is_navigation_finished():
 		return fallback
@@ -307,7 +315,7 @@ func apply_state(d: PackedFloat32Array, i: int) -> void:
 func _physics_process(delta: float) -> void:
 	if multiplayer.is_server():
 		return
-	position = position.lerp(net_pos, minf(1.0, delta * 10.0))
+	position = position.lerp(net_pos, minf(1.0, delta * 8.0))
 	rotation.y = lerp_angle(rotation.y, net_rot, minf(1.0, delta * 10.0))
 	_update_visual(delta)
 
