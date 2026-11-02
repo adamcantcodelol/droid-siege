@@ -12,6 +12,7 @@ var start_btn: Button
 var credits_label: Label
 var shop_list: VBoxContainer
 var shop_credits: Label
+var help_controls: Label
 
 
 func _ready() -> void:
@@ -114,6 +115,8 @@ func _show(which: String) -> void:
 	if which == "main":
 		credits_label.text = "Credits: %d    Missions: %d    Victories: %d    Grenades: %d" % [
 			Game.save["credits"], Game.save["missions"], Game.save["wins"], Game.save["grenades"]]
+	if which == "help":
+		help_controls.text = "Current controls - " + Game.controls_help()
 	if which == "shop":
 		_refresh_shop()
 	if which == "lobby":
@@ -143,6 +146,7 @@ func _build_main(holder: Control) -> Control:
 	diff_opt.selected = int(Game.settings["diff"])
 	diff_opt.item_selected.connect(func(i): Game.settings["diff"] = i; Game.write_save())
 	row.add_child(diff_opt)
+	Game.build_control_options(box)
 	_btn(box, "Singleplayer Mission", func(): Game.write_save(); Game.start_singleplayer())
 	_btn(box, "Multiplayer (Host / Join)", func(): _show("mp"))
 	_btn(box, "Armory (Upgrades & Grenades)", func(): _show("shop"))
@@ -195,7 +199,9 @@ func _build_shop(holder: Control) -> Control:
 func _build_help(holder: Control) -> Control:
 	var box := _panel(holder)
 	_lbl(box, "HOW TO PLAY", 22)
-	_lbl(box, "Capture command posts ALPHA, BRAVO and CHARLIE by standing in their rings (droids in the ring stall the capture). Then survive until the gunship arrives.\n\nWASD move, Shift sprint, Space jump, Mouse aim, Left click fire, Right click aim down sights, R reload, G throw grenade, E (hold) revive a downed squadmate, Esc pause.\n\nB1 droids are weak. B2 super droids are tough. Droidekas roll in fast, then deploy a shield that blocks shots from the front: flank them, shoot them while rolling, or break the shield (grenades do double shield damage).\n\nIf every trooper is down, the mission fails. Earn credits and spend them in the Armory.", 14)
+	help_controls = _lbl(box, "", 14)
+	help_controls.add_theme_color_override("font_color", Color(1, 0.85, 0.5))
+	_lbl(box, "Capture command posts ALPHA, BRAVO and CHARLIE in any order by standing in their rings (more droids than troopers in a ring = CONTESTED, capture pauses). Then survive until the gunship arrives.\n\nB1 droids are weak. B2 super droids are tough. Droidekas roll in fast, then deploy a shield that blocks shots from the front: flank them, shoot them while rolling, or break the shield (grenades do double shield damage).\n\nIf every trooper is down, the mission fails. Earn credits and spend them in the Armory.", 14)
 	_btn(box, "Back", func(): _show("main"))
 	return box
 

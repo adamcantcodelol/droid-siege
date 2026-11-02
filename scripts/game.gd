@@ -50,6 +50,11 @@ var test_mode := ""
 var sounds := {}
 var menu_message := ""
 var mouse_sensitivity := 0.0025
+var control_mode := 0      # 0 = mouse + keyboard, 1 = trackpad / keyboard only
+var turn_speed := 2.6      # radians per second for keyboard turning
+var auto_fire := false
+var aim_assist := true
+const CONTROL_MODES := ["Mouse + Keyboard", "Trackpad / Keyboard Only"]
 var _test_start_ms := 0
 var _test_done := false
 
@@ -73,16 +78,68 @@ func _ready() -> void:
 		call_deferred("_start_test")
 
 
+func controls_help() -> String:
+	if control_mode == 1:
+		return "TRACKPAD / KEYBOARD: WASD move, Arrows or J/L turn + I/K look, F or Ctrl fire (trackpad tap also fires), Q or Alt toggle aim, Shift sprint, Space jump, R reload, G grenade, E (hold) revive, Esc pause. Aim assist pulls toward droids near the crosshair%s." % (", auto-fire ON" if auto_fire else "")
+	return "MOUSE + KEYBOARD: WASD move, Mouse look, Left click fire, Right click aim, Shift sprint, Space jump, R reload, G grenade, E (hold) revive, Esc pause."
+
+
+## Adds the Controls selector (+ turn speed, aim assist, auto-fire) to a menu box.
+func build_control_options(box: Control) -> void:
+	var row := HBoxContainer.new()
+	var l := Label.new()
+	l.text = "Controls:"
+	row.add_child(l)
+	var opt := OptionButton.new()
+	opt.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	for m in CONTROL_MODES:
+		opt.add_item(m)
+	opt.selected = control_mode
+	row.add_child(opt)
+	box.add_child(row)
+	var extra := VBoxContainer.new()
+	box.add_child(extra)
+	var tl := Label.new()
+	tl.text = "Keyboard turn speed"
+	extra.add_child(tl)
+	var ts := HSlider.new()
+	ts.min_value = 0.8
+	ts.max_value = 6.0
+	ts.step = 0.1
+	ts.value = turn_speed
+	ts.value_changed.connect(func(v): turn_speed = v; write_save())
+	extra.add_child(ts)
+	var aa := CheckBox.new()
+	aa.text = "Aim assist (pulls toward droids near the crosshair)"
+	aa.button_pressed = aim_assist
+	aa.toggled.connect(func(on): aim_assist = on; write_save())
+	extra.add_child(aa)
+	var af := CheckBox.new()
+	af.text = "Auto-fire when the crosshair is on a droid"
+	af.button_pressed = auto_fire
+	af.toggled.connect(func(on): auto_fire = on; write_save())
+	extra.add_child(af)
+	extra.visible = control_mode == 1
+	opt.item_selected.connect(func(i): control_mode = i; extra.visible = i == 1; write_save())
+
+
 func is_headless() -> bool:
 	return DisplayServer.get_name() == "headless"
 
 
 # ---------------------------------------------------------------- input
 func _setup_input() -> void:
-	_bind("move_forward", [KEY_W, KEY_UP])
-	_bind("move_back", [KEY_S, KEY_DOWN])
-	_bind("move_left", [KEY_A, KEY_LEFT])
-	_bind("move_right", [KEY_D, KEY_RIGHT])
+	_bind("move_forward", [KEY_W])
+	_bind("move_back", [KEY_S])
+	_bind("move_left", [KEY_A])
+	_bind("move_right", [KEY_D])
+	# Keyboard / trackpad mode (only used when control_mode == 1)
+	_bind("turn_left", [KEY_LEFT, KEY_J])
+	_bind("turn_right", [KEY_RIGHT, KEY_L])
+	_bind("look_up", [KEY_UP, KEY_I])
+	_bind("look_down", [KEY_DOWN, KEY_K])
+	_bind("kb_fire", [KEY_F, KEY_CTRL])
+	_bind("kb_aim", [KEY_Q, KEY_ALT])
 	_bind("sprint", [KEY_SHIFT])
 	_bind("jump", [KEY_SPACE])
 	_bind("reload", [KEY_R])
@@ -109,7 +166,7 @@ func _bind(action: String, keys: Array, mouse_button: int = 0) -> void:
 # ---------------------------------------------------------------- save / upgrades
 func default_save() -> Dictionary:
 	return {"credits": 0, "dmg": 0, "rate": 0, "mag": 0, "armor": 0, "grenades": 2,
-		"missions": 0, "wins": 0, "name": "Trooper", "sens": 0.0025, "map": 0, "diff": 1}
+		"missions": 0, "wins": 0, "name": "Trooper", "sens": 0.0025, "map": 0, "diff": 1, "controls": 0, "turn_speed": 2.6, "auto_fire": false, "aim_assist": true}
 
 
 func load_save() -> void:
@@ -127,11 +184,19 @@ func load_save() -> void:
 	player_name = str(save["name"])
 	settings = {"map": int(save["map"]), "diff": int(save["diff"])}
 	mouse_sensitivity = float(save["sens"])
+	control_mode = int(save["controls"])
+	turn_speed = float(save["turn_speed"])
+	auto_fire = bool(save["auto_fire"])
+	aim_assist = bool(save["aim_assist"])
 
 
 func write_save() -> void:
 	save["name"] = player_name
 	save["sens"] = mouse_sensitivity
+	save["controls"] = control_mode
+	save["turn_speed"] = turn_speed
+	save["auto_fire"] = auto_fire
+	save["aim_assist"] = aim_assist
 	save["map"] = int(settings["map"])
 	save["diff"] = int(settings["diff"])
 	var f := FileAccess.open(SAVE_PATH, FileAccess.WRITE)
@@ -479,9 +544,9 @@ func get_revived() -> void:
 
 
 @rpc("authority", "call_remote", "unreliable_ordered")
-func objective_state(ph: int, prog: float, t: float, k: int, ne: int, earned: int) -> void:
+func objective_state(ph: int, prog: Vector3, cap_mask: int, con_mask: int, t: float, k: int, ne: int, earned: int) -> void:
 	if world != null:
-		world.apply_objective(ph, prog, t, k, ne, earned)
+		world.apply_objective(ph, prog, cap_mask, con_mask, t, k, ne, earned)
 
 
 @rpc("authority", "call_remote", "reliable")
@@ -499,8 +564,10 @@ func mission_end(win: bool, credits: int, kills: int) -> void:
 # ---------------------------------------------------------------- headless test harness
 func _start_test() -> void:
 	match test_mode:
-		"smoke", "smoke2", "smokefail":
+		"smoke", "smoke2", "smokefail", "walkcap", "kbtest":
 			player_name = "SmokeTester"
+			control_mode = 1 if test_mode == "kbtest" else 0
+			aim_assist = true
 			settings = {"map": 1, "diff": 2} if test_mode == "smoke2" else {"map": 0, "diff": 1}
 			start_singleplayer()
 		"server", "server_late":
@@ -562,7 +629,7 @@ func _process(_delta: float) -> void:
 				_test_done = true
 				print("[test] CLIENT FAIL timeout world=%s" % [world != null])
 				get_tree().quit(1)
-		"smoke", "smoke2", "smokefail":
+		"smoke", "smoke2", "smokefail", "walkcap", "kbtest":
 			if elapsed > 150.0:
 				_test_done = true
 				print("[test] SMOKE FAIL timeout phase=", world.phase if world else -1)

@@ -32,6 +32,9 @@ var revive_progress := 0.0
 var revive_target = null
 var is_sprinting := false
 var is_aiming := false
+var aim_toggled := false
+var crosshair_on_enemy := false
+var assist_target = null
 var pitch := 0.0
 var net_pos := Vector3.ZERO
 var net_rot := 0.0
@@ -166,6 +169,10 @@ func _can_act() -> bool:
 		return false
 	if Game.is_headless():
 		return true
+	if Game.world.hud != null and Game.world.hud.is_blocking():
+		return false
+	if Game.control_mode == 1:
+		return true  # keyboard/trackpad mode works without a captured mouse
 	return Input.mouse_mode == Input.MOUSE_MODE_CAPTURED
 
 
@@ -187,7 +194,13 @@ func _physics_process(delta: float) -> void:
 	var input := Vector2.ZERO
 	if act:
 		input = Input.get_vector("move_left", "move_right", "move_forward", "move_back")
-	is_aiming = act and Input.is_action_pressed("aim")
+	if act and Input.is_action_just_pressed("kb_aim"):
+		aim_toggled = not aim_toggled
+	if not act:
+		aim_toggled = false
+	is_aiming = act and (Input.is_action_pressed("aim") or aim_toggled)
+	if act and Game.control_mode == 1:
+		_keyboard_look(delta)
 	is_sprinting = act and Input.is_action_pressed("sprint") and input.y < -0.1 and not is_aiming and reloading <= 0.0
 	var speed := SPRINT_SPEED if is_sprinting else (AIM_SPEED if is_aiming else SPEED)
 	var dir := (transform.basis * Vector3(input.x, 0, input.y))
@@ -213,8 +226,12 @@ func _physics_process(delta: float) -> void:
 		reloading -= delta
 		if reloading <= 0.0:
 			mag = mag_size
+	crosshair_on_enemy = _crosshair_enemy() != null
+	var want_fire := Input.is_action_pressed("fire") or Input.is_action_pressed("kb_fire")
+	if Game.control_mode == 1 and Game.auto_fire and crosshair_on_enemy:
+		want_fire = true
 	if act:
-		if Input.is_action_pressed("fire") and fire_cd <= 0.0 and reloading <= 0.0 and not is_sprinting:
+		if want_fire and fire_cd <= 0.0 and reloading <= 0.0 and not is_sprinting:
 			if mag > 0:
 				_shoot()
 			else:
@@ -240,6 +257,58 @@ func _physics_process(delta: float) -> void:
 	if sync_cd <= 0.0:
 		sync_cd = 0.05
 		Game.net_all("player_state", [position, rotation.y, pitch, health, state], false)
+
+
+## Keyboard / trackpad camera: arrows or J/L turn, I/K look, plus light aim assist.
+func _keyboard_look(delta: float) -> void:
+	var turn := Input.get_axis("turn_left", "turn_right")
+	var look := Input.get_axis("look_down", "look_up")
+	var spd := Game.turn_speed * (0.5 if is_aiming else 1.0)
+	rotation.y -= turn * spd * delta
+	pitch = clampf(pitch + look * spd * 0.6 * delta, -1.2, 1.0)
+	if Game.aim_assist and cam != null:
+		assist_target = _assist_target()
+		if assist_target != null:
+			var aim_at: Vector3 = assist_target.global_position + Vector3(0, 1.2, 0)
+			var d := aim_at - cam.global_position
+			var want_yaw := atan2(-d.x, -d.z)
+			var want_pitch := atan2(d.y, Vector2(d.x, d.z).length())
+			var k := minf(1.0, delta * (7.0 if is_aiming else 4.0))
+			rotation.y = lerp_angle(rotation.y, want_yaw, k)
+			pitch = clampf(lerpf(pitch, want_pitch, k), -1.2, 1.0)
+	pivot.rotation.x = pitch
+
+
+## Nearest visible droid within ~10 degrees of the crosshair and 70 m.
+func _assist_target():
+	var best = null
+	var best_ang := deg_to_rad(10.0)
+	var fwd := -cam.global_transform.basis.z
+	for e in Game.world.enemies.values():
+		if not is_instance_valid(e):
+			continue
+		var p: Vector3 = e.global_position + Vector3(0, 1.2, 0)
+		var d := p - cam.global_position
+		if d.length() > 70.0:
+			continue
+		var ang := fwd.angle_to(d)
+		if ang < best_ang and Game.world.has_los(cam.global_position, p):
+			best_ang = ang
+			best = e
+	return best
+
+
+func _crosshair_enemy():
+	if cam == null:
+		return null
+	var origin := cam.global_position
+	var fwd := -cam.global_transform.basis.z
+	var q := PhysicsRayQueryParameters3D.create(origin, origin + fwd * 120.0, 1 | 4, [get_rid()])
+	var res := get_world_3d().direct_space_state.intersect_ray(q)
+	if res.is_empty():
+		return null
+	var col = res["collider"]
+	return col if col != null and col.has_method("get_enemy_id") else null
 
 
 func _handle_revive(delta: float, act: bool) -> void:
