@@ -391,7 +391,7 @@ func _add_player(pid: int, index: int) -> void:
 	p.name = "P%d" % pid
 	p.position = LZ + Vector3((index - 1.5) * 2.5, 1.0, 0)
 	if versus:
-		p.team = index if ffa else _balanced_team()
+		p.team = int(Game.players[pid]["team"]) if Game.players.has(pid) and Game.players[pid].has("team") else (index if ffa else _balanced_team())
 		p.position = _spawn_for(p.team, index)
 	players_root.add_child(p)
 	players[pid] = p

@@ -458,7 +458,26 @@ func start_mission() -> void:
 	if dedicated and players.is_empty():
 		return
 	write_save()
+	_assign_teams()
 	net_all("rpc_start_mission", [players, randi(), settings])
+
+
+## Host decides teams so every peer (including late joiners) agrees.
+func _assign_teams() -> void:
+	var keys := players.keys()
+	keys.sort()
+	for i in keys.size():
+		players[keys[i]]["team"] = i if int(settings.get("mode", 0)) == 2 else i % 2
+
+
+func _team_for_new_player() -> int:
+	if int(settings.get("mode", 0)) == 2:
+		return players.size()
+	var c := [0, 0]
+	for v in players.values():
+		if v.has("team"):
+			c[clampi(int(v["team"]), 0, 1)] += 1
+	return 0 if c[0] <= c[1] else 1
 
 
 func return_to_menu(message: String = "") -> void:
@@ -562,6 +581,8 @@ func register_player(pname: String) -> void:
 	if clean == "":
 		clean = "Trooper %d" % (players.size() + 1)
 	players[id] = {"name": clean}
+	if in_mission:
+		players[id]["team"] = _team_for_new_player()
 	_broadcast_lobby()
 	if in_mission:
 		# Drop-in: send the late joiner straight into the running mission.
