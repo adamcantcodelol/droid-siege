@@ -20,3 +20,22 @@ sleep 4
 $G --headless --path . -- --test=client | grep "\[test\]"
 wait
 grep "\[test\]" /tmp/ds_server_late.log
+# room-code relay (needs node + relay deps: cd relay && npm install)
+if command -v node >/dev/null && [ -d relay/node_modules ]; then
+  rm -f /tmp/ds_room_code.txt
+  PORT=9081 node relay/relay.js > /tmp/ds_relay.log 2>&1 &
+  RELAY_PID=$!
+  sleep 1
+  $G --headless --path . -- --test=relay_host > /tmp/ds_relay_host.log 2>&1 &
+  for i in $(seq 1 40); do [ -f /tmp/ds_room_code.txt ] && break; sleep 0.5; done
+  $G --headless --path . -- --test=relay_client | grep "\[test\]"
+  wait %2 2>/dev/null; sleep 2
+  grep "\[test\]" /tmp/ds_relay_host.log
+  kill $RELAY_PID
+fi
+# dedicated WebSocket server + ws client
+$G --headless --path . -- --server --port=8081 > /tmp/ds_ded.log 2>&1 &
+DED_PID=$!
+sleep 2
+$G --headless --path . -- --test=client_ws | grep "\[test\]"
+kill $DED_PID

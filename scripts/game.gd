@@ -46,6 +46,12 @@ var in_mission := false
 var dedicated := false          # this process is a headless dedicated server (no local player)
 var server_is_dedicated := false # (clients) the server we joined is dedicated: any trooper can start
 const DEFAULT_WS_PORT := 8080
+## Room-code relay (relay/relay.js). Paste your deployed relay address here before exporting,
+## e.g. "wss://droid-siege-relay.onrender.com". Players can also override it under Advanced.
+const RELAY_URL := ""
+const RelayPeerScript = preload("res://scripts/relay_peer.gd")
+var room_code := ""
+var _pending_relay = null
 var mission_seed := 1
 var settings := {"map": 0, "diff": 1}
 var world: Node = null
@@ -176,7 +182,7 @@ func _bind(action: String, keys: Array, mouse_button: int = 0) -> void:
 # ---------------------------------------------------------------- save / upgrades
 func default_save() -> Dictionary:
 	return {"credits": 0, "dmg": 0, "rate": 0, "mag": 0, "armor": 0, "grenades": 2,
-		"missions": 0, "wins": 0, "name": "Trooper", "sens": 0.0025, "map": 0, "diff": 1, "controls": 0, "turn_speed": 2.6, "auto_fire": false, "aim_assist": true, "ws_url": ""}
+		"missions": 0, "wins": 0, "name": "Trooper", "sens": 0.0025, "map": 0, "diff": 1, "controls": 0, "turn_speed": 2.6, "auto_fire": false, "aim_assist": true, "ws_url": "", "relay_url": ""}
 
 
 func load_save() -> void:
@@ -360,6 +366,57 @@ func join_ws(url: String) -> String:
 	return ""
 
 
+func relay_url() -> String:
+	var u := str(save.get("relay_url", "")).strip_edges()
+	return u if u != "" else RELAY_URL
+
+
+## Host through the relay: the relay hands back a short room code for friends to type.
+func host_room() -> String:
+	leave_network()
+	if relay_url() == "":
+		return "No relay server set. Open Advanced and paste the relay address (see README), or use Direct IP."
+	var peer = RelayPeerScript.new()
+	var err: int = peer.start_host(relay_url())
+	if err != OK:
+		return "Could not reach the relay (error %d)." % err
+	peer.room_ready.connect(_on_room_ready.bind(peer))
+	peer.relay_error.connect(func(msg): _pending_relay = null; net_status.emit(msg))
+	_pending_relay = peer
+	net_status.emit("Contacting relay for a room code... (a sleeping free server can take up to a minute)")
+	return ""
+
+
+func _on_room_ready(code: String, peer) -> void:
+	_pending_relay = null
+	room_code = code
+	multiplayer.multiplayer_peer = peer
+	online = true
+	players = {1: {"name": player_name}}
+	print("[relay] hosting room ", code)
+	net_status.emit("Room code: %s  -  tell your squad to type it in Join with Code." % code)
+	lobby_changed.emit()
+
+
+func join_room(code: String) -> String:
+	leave_network()
+	if relay_url() == "":
+		return "No relay server set. Open Advanced and paste the relay address (see README), or use Direct IP."
+	var clean := code.strip_edges().to_upper()
+	if clean.length() < 4:
+		return "Type the room code your host sees (5 letters/numbers)."
+	var peer = RelayPeerScript.new()
+	var err: int = peer.start_join(relay_url(), clean)
+	if err != OK:
+		return "Could not reach the relay (error %d)." % err
+	peer.relay_error.connect(func(msg): net_status.emit(msg))
+	room_code = clean
+	multiplayer.multiplayer_peer = peer
+	online = true
+	players = {}
+	return ""
+
+
 func join_game(ip: String, port: int) -> String:
 	leave_network()
 	var peer := ENetMultiplayerPeer.new()
@@ -373,6 +430,10 @@ func join_game(ip: String, port: int) -> String:
 
 
 func leave_network() -> void:
+	if _pending_relay != null:
+		_pending_relay.close()
+		_pending_relay = null
+	room_code = ""
 	if multiplayer.multiplayer_peer != null and not (multiplayer.multiplayer_peer is OfflineMultiplayerPeer):
 		multiplayer.multiplayer_peer.close()
 	multiplayer.multiplayer_peer = OfflineMultiplayerPeer.new()
@@ -644,6 +705,15 @@ func _start_test() -> void:
 			player_name = "TestHost"
 			var e := host_game(DEFAULT_PORT + 1)
 			print("[test] server hosting on %d err='%s'" % [DEFAULT_PORT + 1, e])
+		"relay_host":
+			player_name = "RelayHost"
+			save["relay_url"] = "ws://127.0.0.1:9081"
+			print("[test] relay host err='%s'" % host_room())
+		"relay_client":
+			player_name = "RelayClient"
+			save["relay_url"] = "ws://127.0.0.1:9081"
+			var code := FileAccess.get_file_as_string("/tmp/ds_room_code.txt").strip_edges()
+			print("[test] relay client joining code=%s err='%s'" % [code, join_room(code)])
 		"client_ws":
 			player_name = "WebTester"
 			var e3 := join_ws("ws://127.0.0.1:%d" % (DEFAULT_WS_PORT + 1))
@@ -665,6 +735,8 @@ func _start_test() -> void:
 
 
 func _process(_delta: float) -> void:
+	if _pending_relay != null:
+		_pending_relay.poll()
 	if test_mode == "" or _test_done:
 		return
 	var elapsed := (Time.get_ticks_msec() - _test_start_ms) / 1000.0
@@ -675,6 +747,23 @@ func _process(_delta: float) -> void:
 				var scene := get_tree().current_scene
 				print("[test] MENU OK scene=", scene.name if scene else "none")
 				get_tree().quit(0)
+		"relay_host":
+			if room_code != "" and not FileAccess.file_exists("/tmp/ds_room_code.txt"):
+				var f := FileAccess.open("/tmp/ds_room_code.txt", FileAccess.WRITE)
+				f.store_string(room_code)
+				f.close()
+			if not in_mission and players.size() >= 2:
+				print("[test] relay host: client joined via code, starting mission")
+				start_mission()
+			if in_mission and world != null and world.remote_state_packets > 10 and world.server_enemy_count_max > 0 and not _test_done:
+				_test_done = true
+				print("[test] RELAY HOST OK code=%s remote_packets=%d" % [room_code, world.remote_state_packets])
+				await get_tree().create_timer(2.0).timeout
+				get_tree().quit(0)
+			if elapsed > 90.0 and not _test_done:
+				_test_done = true
+				print("[test] RELAY HOST FAIL timeout")
+				get_tree().quit(1)
 		"server", "server_late":
 			if test_mode == "server_late" and not in_mission:
 				print("[test] server_late: starting mission solo before client joins")
@@ -702,7 +791,7 @@ func _process(_delta: float) -> void:
 				_test_done = true
 				print("[test] WS CLIENT FAIL timeout")
 				get_tree().quit(1)
-		"client":
+		"client", "relay_client":
 			if world != null and world.enemy_state_packets > 30 and world.players.size() == 2 \
 					and world.enemies.size() > 0 and world.remote_state_packets > 10:
 				_test_done = true

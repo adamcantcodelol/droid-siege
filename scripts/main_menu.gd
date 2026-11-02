@@ -7,6 +7,8 @@ var name_edit: LineEdit
 var port_edit: LineEdit
 var ip_edit: LineEdit
 var ws_edit: LineEdit
+var code_edit: LineEdit
+var relay_edit: LineEdit
 var lobby_label: Label
 var lobby_info: Label
 var start_btn: Button
@@ -160,32 +162,81 @@ func _build_main(holder: Control) -> Control:
 func _build_mp(holder: Control) -> Control:
 	var box := _panel(holder)
 	_lbl(box, "MULTIPLAYER (up to 4 troopers)", 22)
-	_lbl(box, "Online server (works in browsers / school Wi-Fi):")
+	_btn(box, "Host Game (get a room code)", _on_host_room)
+	_lbl(box, "Got a code from a friend?")
+	var row := HBoxContainer.new()
+	box.add_child(row)
+	code_edit = LineEdit.new()
+	code_edit.placeholder_text = "ROOM CODE"
+	code_edit.max_length = 8
+	code_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	code_edit.add_theme_font_size_override("font_size", 22)
+	code_edit.text_submitted.connect(func(_t): _on_join_room())
+	row.add_child(code_edit)
+	var jb := Button.new()
+	jb.text = "Join with Code"
+	jb.custom_minimum_size = Vector2(160, 44)
+	jb.pressed.connect(_on_join_room)
+	row.add_child(jb)
+	var adv_btn := Button.new()
+	adv_btn.text = "Advanced (relay address, online server, direct IP)  v"
+	adv_btn.flat = true
+	box.add_child(adv_btn)
+	var adv := VBoxContainer.new()
+	adv.visible = false
+	box.add_child(adv)
+	adv_btn.pressed.connect(func(): adv.visible = not adv.visible)
+
+	_lbl(adv, "Relay server address (leave empty to use the built-in one%s):" % ("" if Game.RELAY_URL == "" else ": " + Game.RELAY_URL), 13)
+	relay_edit = LineEdit.new()
+	relay_edit.text = str(Game.save.get("relay_url", ""))
+	relay_edit.placeholder_text = "wss://your-relay.onrender.com"
+	relay_edit.text_changed.connect(func(t): Game.save["relay_url"] = t.strip_edges(); Game.write_save())
+	adv.add_child(relay_edit)
+
+	_lbl(adv, "Dedicated online server (wss://...):", 13)
 	ws_edit = LineEdit.new()
 	ws_edit.text = str(Game.save.get("ws_url", ""))
-	ws_edit.placeholder_text = "wss://your-droid-siege-server.onrender.com"
-	box.add_child(ws_edit)
-	_btn(box, "Join Online Server", _on_join_ws)
+	ws_edit.placeholder_text = "wss://your-droid-siege-server.example.com"
+	adv.add_child(ws_edit)
+	_btn(adv, "Join Dedicated Server", _on_join_ws)
+
 	var direct := VBoxContainer.new()
-	box.add_child(direct)
+	adv.add_child(direct)
 	if Game.is_web():
-		_lbl(box, "Direct IP hosting (ENet) is only available in the desktop version.", 13)
+		_lbl(adv, "Direct IP (ENet) is only available in the desktop version.", 13)
 		direct.visible = false
-	box = direct
-	_lbl(box, "Port (UDP):")
+	_lbl(direct, "Direct IP (LAN or Tailscale) - UDP port:", 13)
 	port_edit = LineEdit.new()
 	port_edit.text = str(Game.DEFAULT_PORT)
-	box.add_child(port_edit)
-	_btn(box, "Host Game", _on_host)
-	_lbl(box, "Host IP address to join:")
+	direct.add_child(port_edit)
+	_btn(direct, "Host Direct (no code)", _on_host)
 	ip_edit = LineEdit.new()
 	ip_edit.text = "127.0.0.1"
-	ip_edit.placeholder_text = "e.g. 192.168.1.20 or a Tailscale 100.x.y.z address"
-	box.add_child(ip_edit)
-	_btn(box, "Join Game", _on_join)
-	_lbl(box, "Same Wi-Fi: use the host's LAN IP. Different houses: install Tailscale (free) on every PC, sign into the same tailnet, and join the host's 100.x.y.z address.", 13)
-	_btn(direct.get_parent(), "Back", func(): _show("main"))
-	return direct.get_parent()
+	ip_edit.placeholder_text = "Host IP, e.g. 192.168.1.20 or a Tailscale 100.x.y.z"
+	direct.add_child(ip_edit)
+	_btn(direct, "Join Direct IP", _on_join)
+	_btn(box, "Back", func(): _show("main"))
+	return box
+
+
+func _on_host_room() -> void:
+	Game.write_save()
+	var err := Game.host_room()
+	if err != "":
+		status.text = err
+		return
+	_show("lobby")
+
+
+func _on_join_room() -> void:
+	Game.write_save()
+	var err := Game.join_room(code_edit.text)
+	if err != "":
+		status.text = err
+		return
+	status.text = "Joining room %s ..." % code_edit.text.strip_edges().to_upper()
+	_show("lobby")
 
 
 func _build_lobby(holder: Control) -> Control:
@@ -293,7 +344,7 @@ func _on_join() -> void:
 
 func _on_status(msg: String) -> void:
 	status.text = msg
-	if not Game.online and panels["lobby"].get_parent().get_parent().visible:
+	if not Game.online and Game._pending_relay == null and panels["lobby"].get_parent().get_parent().visible:
 		_show("mp")
 
 
@@ -306,11 +357,14 @@ func _refresh_lobby() -> void:
 	for k in keys:
 		t += "- %s%s\n" % [Game.players[k]["name"], "  (host)" if k == 1 else ""]
 	if t == "":
-		t = "(connecting...)"
+		t = "(connecting...)" if Game.online or Game._pending_relay != null else "(not connected)"
 	lobby_label.text = "Troopers (%d/4):\n%s" % [Game.players.size(), t]
 	var is_host: bool = Game.online and multiplayer.is_server()
 	start_btn.visible = is_host or (Game.server_is_dedicated and Game.online)
-	if is_host:
+	if is_host and Game.room_code != "":
+		lobby_info.text = "ROOM CODE:  %s\nYour friends: Multiplayer > type the code > Join with Code." % Game.room_code
+		lobby_info.add_theme_font_size_override("font_size", 20)
+	elif is_host:
 		var ips := PackedStringArray()
 		for a in IP.get_local_addresses():
 			if a.count(".") == 3 and not a.begins_with("127.") and not a.begins_with("169.254"):
