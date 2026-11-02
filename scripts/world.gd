@@ -1172,7 +1172,7 @@ func _test_pvp_server(delta: float) -> void:
 	test_cd -= delta
 	pvp_damage(1, 1, 9999.0, Vector3.ZERO)  # self damage must be ignored
 	if players.has(1) and players[1].state != 0:
-		Game.finish_test(false, "PVP self-damage applied")
+		Game.finish_test(false, "PVP self-damage applied state=%d hp=%.0f pos=%s" % [players[1].state, players[1].health, players[1].global_position])
 		return
 	for pid in players.keys():
 		if pid != 1 and test_cd <= 0.0 and players[pid].state == 0:

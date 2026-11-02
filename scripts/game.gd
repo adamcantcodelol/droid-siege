@@ -761,7 +761,7 @@ func _start_test() -> void:
 			print("[test] server hosting on %d err='%s'" % [DEFAULT_PORT + 1, e])
 		"pvp_server":
 			player_name = "RedHost"
-			settings = {"map": 1, "diff": 1, "mode": 0}
+			settings = {"map": 0, "diff": 1, "mode": 1}
 			print("[test] pvp server err='%s'" % host_game(DEFAULT_PORT + 2))
 		"pvp_client":
 			player_name = "BlueClient"
