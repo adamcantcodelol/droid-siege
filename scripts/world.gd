@@ -18,6 +18,8 @@ var LZ := Vector3(0, 0, 72)
 const CAPTURE_RADIUS := 7.0
 const EXTRACT_TIME := 120.0
 const PICKUP_TIME := 30.0
+const HORDE_TIME := 240.0
+var horde := false
 const BOARD_RADIUS := 8.0
 var pickup := false
 var pickup_t := 0.0
@@ -80,11 +82,18 @@ func _ready() -> void:
 	M = Game.MAPS[clampi(int(Game.settings["map"]), 0, Game.MAPS.size() - 1)]
 	DIFF = Game.DIFFICULTIES[clampi(int(Game.settings["diff"]), 0, Game.DIFFICULTIES.size() - 1)]
 	POSTS = M["posts"]
-	versus = int(Game.settings.get("mode", 0)) > 0
+	versus = Game.is_versus_mode(int(Game.settings.get("mode", 0)))
+	horde = int(Game.settings.get("mode", 0)) == Game.HORDE
+	if horde:
+		# Horde: no posts to take, straight into the extraction defence with a longer clock
+		post_captured = [true, true, true]
+		post_progress = [1.0, 1.0, 1.0]
+		phase = 3
+		timer = HORDE_TIME
 	ffa = int(Game.settings.get("mode", 0)) == 2
 	pvp_target = 10 if ffa else 15
 	LZ = M["lz"]
-	if Game.test_mode in ["smoke", "smoke2", "smokefail", "walkcap", "kbtest", "weapons", "hitbox", "camview"]:
+	if Game.test_mode in ["smoke", "smoke2", "smokefail", "walkcap", "kbtest", "weapons", "hitbox", "camview", "horde"]:
 		test_speed = 4.0
 		Engine.time_scale = 3.0
 	players_root = _child_node("Players")
@@ -114,7 +123,7 @@ func _ready() -> void:
 		_bench.call_deferred()
 	if Game.test_mode.begins_with("mapcheck"):
 		_test_mapcheck.call_deferred()
-	show_message("%s (%s): squad deployed! Head for Command Post ALPHA." % [M["name"], DIFF["name"]])
+	show_message(("%s (%s): HORDE! Hold out until the gunship arrives." if horde else "%s (%s): squad deployed! Head for Command Post ALPHA.") % [M["name"], DIFF["name"]])
 
 
 func _exit_tree() -> void:
@@ -915,7 +924,7 @@ func on_mission_end(win: bool, credits: int, k: int) -> void:
 	Game.write_save()
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 	hud.show_end(win, credits, k)
-	if Game.test_mode in ["smoke", "smoke2"]:
+	if Game.test_mode in ["smoke", "smoke2", "horde"]:
 		var plen := nav_path_length(LZ, POSTS[0])
 		print("[test] map=%s diff=%s nav polys=%d path_points LZ->ALPHA=%d" % [M["name"], DIFF["name"], nav_polys, plen])
 		print("[test] kill feed entries=%d" % hud.feed_box.get_child_count())
@@ -1047,7 +1056,7 @@ func _test_autopilot(delta: float) -> void:
 	if Game.test_mode == "pvp_server":
 		_test_pvp_server(delta)
 		return
-	if Game.test_mode not in ["smoke", "smoke2", "smokefail", "walkcap", "kbtest", "weapons", "hitbox", "camview"]:
+	if Game.test_mode not in ["smoke", "smoke2", "smokefail", "walkcap", "kbtest", "weapons", "hitbox", "camview", "horde"]:
 		return
 	test_elapsed += delta
 	var lp = local_player()
@@ -1068,7 +1077,7 @@ func _test_autopilot(delta: float) -> void:
 	if Game.test_mode == "kbtest":
 		_test_keyboard(delta, lp)
 		return
-	if Game.test_mode in ["smoke", "smoke2"]:
+	if Game.test_mode in ["smoke", "smoke2", "horde"]:
 		lp.god = true
 		if phase < 3:
 			lp.global_position = POSTS[nearest_open_post(lp.global_position)] + Vector3(1, 0.5, 1)

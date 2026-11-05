@@ -5,8 +5,13 @@ extends CharacterBody3D
 const SPEED := 6.0
 const SPRINT_SPEED := 10.0
 const AIM_SPEED := 3.5
-const JUMP_VELOCITY := 5.5
-const GRAVITY := 14.0
+const JUMP_VELOCITY := 6.2
+const GRAVITY := 16.0
+const FALL_GRAVITY := 24.0   # heavier on the way down: less floaty
+const COYOTE := 0.12
+const JUMP_BUFFER := 0.12
+var _air_t := 0.0
+var _jump_buf := 0.0
 const BLEED_TIME := 30.0
 const REVIVE_TIME := 2.5
 const RELOAD_TIME := 1.4
@@ -243,7 +248,7 @@ func _physics_process(delta: float) -> void:
 	var act := _can_act()
 
 	if not is_on_floor():
-		velocity.y -= GRAVITY * delta
+		velocity.y -= (GRAVITY if velocity.y > 0.0 else FALL_GRAVITY) * delta
 	var input := Vector2.ZERO
 	if act:
 		input = Input.get_vector("move_left", "move_right", "move_forward", "move_back")
@@ -259,11 +264,18 @@ func _physics_process(delta: float) -> void:
 	var dir := (transform.basis * Vector3(input.x, 0, input.y))
 	dir.y = 0
 	dir = dir.normalized()
-	var accel := 12.0 if is_on_floor() else 3.0
+	# snappier: fast ground accel, even faster stop when the keys are released
+	var accel := (16.0 if dir != Vector3.ZERO else 22.0) if is_on_floor() else 4.0
 	velocity.x = move_toward(velocity.x, dir.x * speed, accel * speed * delta)
 	velocity.z = move_toward(velocity.z, dir.z * speed, accel * speed * delta)
-	if act and Input.is_action_just_pressed("jump") and is_on_floor():
-		velocity.y = JUMP_VELOCITY
+	_air_t = 0.0 if is_on_floor() else _air_t + delta
+	_jump_buf = JUMP_BUFFER if (act and Input.is_action_just_pressed("jump")) else maxf(0.0, _jump_buf - delta)
+	if _jump_buf > 0.0 and _air_t < COYOTE and velocity.y <= 0.5:
+		velocity.y = JUMP_VELOCITY   # coyote time + jump buffering
+		_jump_buf = 0.0
+		_air_t = COYOTE
+	if not Input.is_action_pressed("jump") and velocity.y > 2.0:
+		velocity.y -= 30.0 * delta   # short hop when jump is tapped
 	move_and_slide()
 	if position.y < -20.0:
 		position = Game.world.LZ + Vector3(0, 2, 0)

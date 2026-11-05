@@ -102,6 +102,8 @@ Performance: repeated props are batched into MultiMeshInstance3D (≈17-23 draw 
 `--test=mapcheck0/1/2` verifies the navmesh bakes and every post is reachable from the LZ, both team spawns, every droid entry point and the high ground.
 
 ## Weapons, enemies, graphics (latest)
+- **Modes:** Co-op Droid Siege, Co-op Horde Survival (4 min hold-out, also solo), Versus Team Deathmatch (1v1-2v2), Versus Free-for-All. Solo modes are picked next to the map on the main menu; lobby hosts pick any mode.
+- **Movement:** snappier accel/stop, heavier fall, coyote time + jump buffering, tap jump for a short hop.
 - **View:** V toggles first person (saved). **Extraction:** when the timer ends the gunship lands at the LZ; everyone still standing must board (stand on the pad) within 30 s.
 - **Weapons:** slot 1 DC-15A rifle, slot 2 DP-23 scatter blaster (8 pellets, 6-shell mag). Switch with **1 / 2**, the **mouse wheel**, or **X / C** (keyboard mode).
 - **OOM Commander** (yellow droid, from wave 2): droids within 12 m of it fire 43% faster and hit 25% harder. Kill it first.

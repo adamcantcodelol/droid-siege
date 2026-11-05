@@ -74,7 +74,12 @@ var control_mode := 0      # 0 = mouse + keyboard, 1 = trackpad / keyboard only
 var turn_speed := 2.6      # radians per second for keyboard turning
 var auto_fire := false
 var aim_assist := true
-const GAME_MODES := ["Co-op: Droid Siege", "Versus: Team Deathmatch", "Versus: Free-for-All"]
+const GAME_MODES := ["Co-op: Droid Siege (capture 3 posts)", "Versus: Team Deathmatch (1v1-2v2)", "Versus: Free-for-All", "Co-op: Horde Survival (4 min)"]
+const HORDE := 3
+
+
+func is_versus_mode(m: int) -> bool:
+	return m == 1 or m == 2
 const CONTROL_MODES := ["Mouse + Keyboard", "Trackpad / Keyboard Only"]
 var _test_start_ms := 0
 var _test_done := false
@@ -514,6 +519,8 @@ func leave_network() -> void:
 func start_singleplayer() -> void:
 	leave_network()
 	players = {1: {"name": player_name}}
+	if is_versus_mode(int(settings.get("mode", 0))):
+		settings["mode"] = 0   # versus needs other players; solo falls back to co-op
 	start_mission()
 
 
@@ -816,11 +823,13 @@ func mission_end(win: bool, credits: int, kills: int) -> void:
 # ---------------------------------------------------------------- headless test harness
 func _start_test() -> void:
 	match test_mode:
-		"smoke", "smoke2", "smokefail", "walkcap", "kbtest", "weapons", "hitbox", "camview":
+		"smoke", "smoke2", "smokefail", "walkcap", "kbtest", "weapons", "hitbox", "camview", "horde":
 			player_name = "SmokeTester"
 			control_mode = 1 if test_mode == "kbtest" else 0
 			aim_assist = true
 			settings = {"map": 1, "diff": 2, "mode": 0} if test_mode == "smoke2" else {"map": 0, "diff": 1, "mode": 0}
+			if test_mode == "horde":
+				settings = {"map": 2, "diff": 1, "mode": HORDE}
 			start_singleplayer()
 		"bench0", "bench1", "bench2":
 			player_name = "Bench"

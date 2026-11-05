@@ -144,6 +144,12 @@ func _build_main(holder: Control) -> Control:
 	map_opt.selected = int(Game.settings["map"])
 	map_opt.item_selected.connect(func(i): Game.settings["map"] = i; Game.write_save())
 	row.add_child(map_opt)
+	var solo_opt := OptionButton.new()
+	solo_opt.add_item("Solo: Droid Siege")
+	solo_opt.add_item("Solo: Horde Survival")
+	solo_opt.selected = 1 if int(Game.settings.get("mode", 0)) == Game.HORDE else 0
+	solo_opt.item_selected.connect(func(i): Game.settings["mode"] = Game.HORDE if i == 1 else 0; Game.write_save())
+	row.add_child(solo_opt)
 	var diff_opt := OptionButton.new()
 	for d in Game.DIFFICULTIES:
 		diff_opt.add_item(d["name"])
