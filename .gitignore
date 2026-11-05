@@ -16,3 +16,6 @@ export/
 *.pck
 tools/live_relay_*.gd
 tools/live_relay_*.gd.uid
+
+# Keep tools/build_single_html.py tracked; ignore generated single-file HTML if copied here
+/DroidSiege.html

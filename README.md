@@ -2,6 +2,7 @@
 ## Live multiplayer (free)
 - **GitHub Pages:** https://adamcantcodelol.github.io/droid-siege/
 - **Source + Windows release:** https://github.com/adamcantcodelol/droid-siege — [v1.0 Windows download](https://github.com/adamcantcodelol/droid-siege/releases/tag/v1.0)
+- **Single-file HTML (download & open):** [DroidSiege.html](https://github.com/adamcantcodelol/droid-siege/releases/download/v1.0/DroidSiege.html) — double-click to play in any browser (`file://`), no install. Rebuild with `python3 tools/build_single_html.py`.
 - **Play in browser:** https://droid-siege.moeller-basil.workers.dev/
 - **Room-code relay (built in):** `wss://droid-siege.moeller-basil.workers.dev/ws`
   Host → Multiplayer → Host Game → share the 5-letter code. Friends Join with Code.
