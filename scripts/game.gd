@@ -815,7 +815,7 @@ func mission_end(win: bool, credits: int, kills: int) -> void:
 # ---------------------------------------------------------------- headless test harness
 func _start_test() -> void:
 	match test_mode:
-		"smoke", "smoke2", "smokefail", "walkcap", "kbtest", "weapons", "hitbox":
+		"smoke", "smoke2", "smokefail", "walkcap", "kbtest", "weapons", "hitbox", "camview":
 			player_name = "SmokeTester"
 			control_mode = 1 if test_mode == "kbtest" else 0
 			aim_assist = true
@@ -865,6 +865,43 @@ func _start_test() -> void:
 			settings = {"map": 1 if test_mode == "shot" else int(test_mode.right(1)), "diff": 1, "mode": 0}
 			start_singleplayer()
 			await get_tree().create_timer(9.0).timeout
+			var lp = world.local_player() if world else null
+			if OS.get_environment("DS_GRID") != "":
+				var short := 0
+				var tot := 0
+				var nm = world.get_world_3d().navigation_map
+				for gx in range(-80, 81, 10):
+					for gz in range(-80, 81, 10):
+						var p3: Vector3 = NavigationServer3D.map_get_closest_point(nm, Vector3(gx, 0, gz))
+						lp.global_position = p3 + Vector3(0, 0.05, 0)
+						lp.rotation.y = randf() * TAU
+						await get_tree().physics_frame
+						await get_tree().physics_frame
+						tot += 1
+						if lp.spring.get_hit_length() < 1.2:
+							short += 1
+							if short <= 6:
+								print("[diag] short spring %.2f at %s" % [lp.spring.get_hit_length(), p3])
+				print("[diag] spring short at %d / %d spots" % [short, tot])
+			if OS.get_environment("DS_RUN") != "":
+				Input.action_press("move_forward")
+				Input.action_press("fire")
+				for k in 8:
+					await get_tree().create_timer(0.4).timeout
+					var sk0 = lp.char_model.find_children("*", "Skeleton3D", true, false)[0]
+					print("[diag] t=%d pos=%s root=%s hips=%s anim=%s" % [k, lp.global_position, (sk0.global_transform * sk0.get_bone_global_pose(0)).origin, (sk0.global_transform * sk0.get_bone_global_pose(3)).origin, lp.char_model.cur])
+				Input.action_release("fire")
+			if lp != null:
+				var cm = lp.char_model
+				var vis := 0
+				for mi in cm.meshes:
+					if mi.is_visible_in_tree():
+						vis += 1
+				var sk = cm.find_children("*", "Skeleton3D", true, false)
+				print("[diag] renderer=%s player=%s cam=%s spring_hit=%.2f model_vis=%s meshes_vis=%d/%d model_gscale=%s cm_scale=%s bone0=%s cam_cull=%d anim=%s" % [
+					RenderingServer.get_current_rendering_method(), lp.global_position, lp.cam.global_position, lp.spring.get_hit_length(),
+					lp.model.is_visible_in_tree(), vis, cm.meshes.size(), lp.model.global_transform.basis.get_scale(), cm.scale,
+					(sk[0].global_transform * sk[0].get_bone_global_pose(0)).origin if sk.size() > 0 else null, lp.cam.cull_mask, cm.cur])
 			_save_shot("/tmp/ds_game_%s.png" % test_mode)
 			get_tree().quit(0)
 
@@ -971,6 +1008,8 @@ func _process(_delta: float) -> void:
 
 func _save_shot(path: String) -> void:
 	await RenderingServer.frame_post_draw
+	if OS.get_environment("DS_SHOT_DIR") != "":
+		path = OS.get_environment("DS_SHOT_DIR").path_join(path.get_file())
 	get_viewport().get_texture().get_image().save_png(path)
 	print("[test] saved ", path)
 

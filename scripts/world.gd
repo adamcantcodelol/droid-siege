@@ -79,7 +79,7 @@ func _ready() -> void:
 	ffa = int(Game.settings.get("mode", 0)) == 2
 	pvp_target = 10 if ffa else 15
 	LZ = M["lz"]
-	if Game.test_mode in ["smoke", "smoke2", "smokefail", "walkcap", "kbtest", "weapons", "hitbox"]:
+	if Game.test_mode in ["smoke", "smoke2", "smokefail", "walkcap", "kbtest", "weapons", "hitbox", "camview"]:
 		test_speed = 4.0
 		Engine.time_scale = 3.0
 	players_root = _child_node("Players")
@@ -1009,7 +1009,7 @@ func _test_autopilot(delta: float) -> void:
 	if Game.test_mode == "pvp_server":
 		_test_pvp_server(delta)
 		return
-	if Game.test_mode not in ["smoke", "smoke2", "smokefail", "walkcap", "kbtest", "weapons", "hitbox"]:
+	if Game.test_mode not in ["smoke", "smoke2", "smokefail", "walkcap", "kbtest", "weapons", "hitbox", "camview"]:
 		return
 	test_elapsed += delta
 	var lp = local_player()
@@ -1017,6 +1017,9 @@ func _test_autopilot(delta: float) -> void:
 		return
 	if Game.test_mode == "walkcap":
 		_test_walkcap(delta, lp)
+		return
+	if Game.test_mode == "camview":
+		_test_camview(lp)
 		return
 	if Game.test_mode == "hitbox":
 		_test_hitbox(lp)
@@ -1415,3 +1418,33 @@ func _test_hitbox(lp) -> void:
 		e.die()
 		enemies.erase(e.eid)
 	Game.finish_test(ok, "HITBOX every droid type hit at its visual centre/legs/head")
+
+
+## Local trooper must be in front of the camera and on screen: at the LZ, backed against the
+## ALPHA flag pole and backed against a mesa wall (the cases that used to put the camera in the helmet).
+func _test_camview(lp) -> void:
+	if _t_stage > 0:
+		return
+	_t_stage = 1
+	lp.god = true
+	spawn_cd = 9999.0
+	var ok := true
+	var spots := [[LZ + Vector3(0, 0.05, -2), 0.0], [POSTS[0] + Vector3(-0.75, 0.05, -1.0), 0.0], [Vector3(-16.8, 0.05, -5.0), -PI / 2.0], [Vector3(-16.8, 0.05, -5.0), PI / 2.0]]
+	for sp in spots:
+		lp.global_position = sp[0]
+		lp.rotation.y = sp[1]
+		lp.velocity = Vector3.ZERO
+		for k in 4:
+			await get_tree().physics_frame
+		await get_tree().process_frame
+		var head: Vector3 = lp.global_position + Vector3(0, 1.5, 0)
+		var chest: Vector3 = lp.global_position + Vector3(0, 1.0, 0)
+		var dist: float = lp.cam.global_position.distance_to(head)
+		var on_screen: bool = lp.cam.is_position_in_frustum(chest) and lp.model.is_visible_in_tree()
+		var vis := 0
+		for mi in lp.char_model.meshes:
+			if mi.is_visible_in_tree():
+				vis += 1
+		print("[test] camview at %s: spring_hit=%.2f cam->head=%.2f trooper_on_screen=%s visible_meshes=%d" % [sp[0], lp.spring.get_hit_length(), dist, on_screen, vis])
+		ok = ok and on_screen and dist >= 1.1 and vis >= 3
+	Game.finish_test(ok, "CAMVIEW local trooper visible in third person")

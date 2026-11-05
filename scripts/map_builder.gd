@@ -48,6 +48,10 @@ func mat(c: Color, rough: float = 0.9, emit: float = 0.0) -> StandardMaterial3D:
 func box(pos: Vector3, size: Vector3, color: Color, rot: Vector3 = Vector3.ZERO, visible := true, occlude := false) -> StaticBody3D:
 	var b := StaticBody3D.new()
 	b.collision_layer = 1
+	# Layer 8 = "camera blocker": only big solids stop the third-person camera. Thin props
+	# (flag poles, crates, barrels) must not, or the camera collapses into the trooper's head.
+	if minf(size.x, size.z) >= 0.5 and size.y >= 1.5 and maxf(size.x, size.z) >= 2.5:
+		b.collision_layer = 1 | 8
 	b.collision_mask = 0
 	if visible:
 		var mi := MeshInstance3D.new()
@@ -76,7 +80,7 @@ func box(pos: Vector3, size: Vector3, color: Color, rot: Vector3 = Vector3.ZERO,
 
 func cyl(pos: Vector3, r_bottom: float, r_top: float, h: float, color: Color, visible := true, sides := 12) -> StaticBody3D:
 	var b := StaticBody3D.new()
-	b.collision_layer = 1
+	b.collision_layer = 1 | 8 if maxf(r_bottom, r_top) >= 1.2 else 1
 	b.collision_mask = 0
 	if visible:
 		var mi := MeshInstance3D.new()
@@ -113,6 +117,7 @@ func ramp(a: Vector3, b: Vector3, width: float, color: Color) -> void:
 	var basis := Basis(Vector3.UP, yaw) * Basis(Vector3.RIGHT, pitch)
 	var off := basis * Vector3(0, -thick / 2.0, 0)
 	var body := box(center + off, Vector3(width, thick, length), color)
+	body.collision_layer = 1 | 8
 	body.transform.basis = basis
 
 
@@ -295,6 +300,7 @@ func post_ring(center: Vector3, radius: float, color: Color) -> void:
 ## Ground slab with a subtle noise texture so big floors aren't flat colour.
 func ground(size: float, color: Color, color2: Color) -> void:
 	var b := box(Vector3(0, -0.5, 0), Vector3(size, 1, size), color)
+	b.collision_layer = 1 | 8
 	b.name = "Ground"
 	var mi := b.get_child(0) as MeshInstance3D
 	var m := StandardMaterial3D.new()

@@ -82,14 +82,14 @@ func _ready() -> void:
 		probe.radius = 0.35
 		spring.shape = probe  # sphere sweep keeps the near plane out of walls
 		spring.position = Vector3(0.75, 0.1, 0)
-		spring.collision_mask = 1
+		spring.collision_mask = 8   # big solids only (see map_builder.box)
 		spring.add_excluded_object(get_rid())
 		pivot.add_child(spring)
 		cam = Camera3D.new()
 		cam.fov = 75.0
 		cam.far = 400.0
 		cam.near = 0.05
-		spring.add_child(cam)
+		pivot.add_child(cam)   # placed by _place_camera() from the spring's hit length
 		cam.current = true
 	else:
 		name_label = Label3D.new()
@@ -263,6 +263,7 @@ func _physics_process(delta: float) -> void:
 		position = Game.world.LZ + Vector3(0, 2, 0)
 		velocity = Vector3.ZERO
 
+	_place_camera()
 	# Camera zoom
 	if cam != null:
 		cam.fov = lerpf(cam.fov, 50.0 if is_aiming else (80.0 if is_sprinting else 72.0), minf(1.0, delta * 10.0))
@@ -318,6 +319,24 @@ func _physics_process(delta: float) -> void:
 
 
 ## Keyboard / trackpad camera: arrows or J/L turn, I/K look, plus light aim assist.
+## Third-person camera: follow the SpringArm's collision distance, but never closer than
+## MIN_CAM_DIST. Before this, a wall/pole right behind the trooper collapsed the camera to
+## ~0 m, i.e. inside the helmet, so the player only saw the crosshair and no trooper.
+const MIN_CAM_DIST := 1.25
+
+
+func _place_camera() -> void:
+	if cam == null:
+		return
+	var d := clampf(spring.get_hit_length(), MIN_CAM_DIST, maxf(spring.spring_length, MIN_CAM_DIST))
+	cam.position = spring.position + Vector3(0, 0, d)
+
+
+func _process(_delta: float) -> void:
+	if is_local:
+		_place_camera()
+
+
 func _keyboard_look(delta: float) -> void:
 	var turn := Input.get_axis("turn_left", "turn_right")
 	var look := Input.get_axis("look_down", "look_up")
