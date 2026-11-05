@@ -1574,6 +1574,8 @@ func _test_mech(lp) -> void:
 	Input.action_release("kb_fire")
 	var fired: bool = lp.fire_cd > 0.0
 	var camd: float = lp.cam.global_position.distance_to(lp.global_position)
+	# crosshair ray must not hit the walker: camera above the cockpit roof (3.8 m)
+	var clear: bool = lp.cam.global_position.y - lp.global_position.y > 4.5
 	await get_tree().physics_frame
 	Input.action_press("interact")
 	await get_tree().physics_frame
@@ -1581,8 +1583,8 @@ func _test_mech(lp) -> void:
 	Input.action_release("interact")
 	await get_tree().physics_frame
 	var exited: bool = lp.in_mech == -1 and mechs[0].visible and mechs[0].global_position.distance_to(p0) > 2.0
-	print("[test] mech near=%s entered=%s moved=%.1fm turned=%s fired=%s chase_cam=%.1fm exited=%s" % [near, entered, moved, turned, fired, camd, exited])
-	Game.finish_test(near and entered and moved > 2.0 and turned and fired and camd > 5.0 and exited, "MECH enter/drive/fire/exit")
+	print("[test] mech near=%s entered=%s moved=%.1fm turned=%s fired=%s chase_cam=%.1fm cam_above_roof=%s exited=%s" % [near, entered, moved, turned, fired, camd, clear, exited])
+	Game.finish_test(near and entered and moved > 2.0 and turned and fired and camd > 7.0 and clear and exited, "MECH enter/drive/fire/exit")
 
 
 func _test_camview(lp) -> void:
@@ -1627,7 +1629,7 @@ func _test_camview(lp) -> void:
 	Input.action_release("view_toggle")
 	await get_tree().process_frame
 	var eye_d: float = lp.cam.global_position.distance_to(lp.global_position + Vector3(0, 1.65, 0))
-	var fp_ok: bool = lp.first_person and eye_d < 0.5 and (lp.cam.cull_mask & 2) == 0 and lp.char_model.meshes[0].layers == 2
+	var fp_ok: bool = lp.first_person and eye_d < 0.5 and (lp.cam.cull_mask & 2) == 0 and lp.char_model.meshes[0].layers == 2 and lp.viewmodel != null and lp.viewmodel.visible
 	print("[test] camview first person: on=%s cam->eyes=%.2f body_culled=%s camlocal=%s pivot=%s cam=%s p=%s" % [lp.first_person, eye_d, (lp.cam.cull_mask & 2) == 0, lp.cam.position, lp.pivot.global_position, lp.cam.global_position, lp.global_position])
 	Input.action_press("view_toggle")
 	await get_tree().physics_frame

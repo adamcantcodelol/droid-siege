@@ -296,7 +296,7 @@ func _physics_process(delta: float) -> void:
 	# Camera zoom
 	if cam != null:
 		cam.fov = lerpf(cam.fov, 50.0 if is_aiming else (80.0 if is_sprinting else 72.0), minf(1.0, delta * 10.0))
-		spring.spring_length = lerpf(spring.spring_length, (5.0 if is_aiming else 7.0) if in_mech >= 0 else (1.8 if is_aiming else 3.2), minf(1.0, delta * 10.0))
+		spring.spring_length = lerpf(spring.spring_length, (7.0 if is_aiming else 8.5) if in_mech >= 0 else (1.8 if is_aiming else 3.2), minf(1.0, delta * 10.0))
 
 	# Weapon
 	if reloading > 0.0:
@@ -362,6 +362,35 @@ const MIN_CAM_DIST := 1.25
 var first_person := false
 var in_mech := -1          # index into world.mechs while piloting
 var mech_vis: Node3D = null
+var viewmodel: Node3D = null
+
+
+## First-person DC-15 style blaster: a few boxes parented to the camera, lower right, no shadows.
+func _build_viewmodel() -> Node3D:
+	var vm := Node3D.new()
+	vm.position = Vector3(0.2, -0.2, -0.42)
+	cam.add_child(vm)
+	var parts := [
+		[Vector3(0.07, 0.09, 0.42), Vector3(0, 0, 0), Color(0.12, 0.12, 0.13)],          # receiver
+		[Vector3(0.035, 0.035, 0.32), Vector3(0, 0.015, -0.34), Color(0.2, 0.2, 0.22)],  # barrel
+		[Vector3(0.05, 0.05, 0.05), Vector3(0, 0.015, -0.5), Color(0.08, 0.08, 0.08)],   # muzzle
+		[Vector3(0.04, 0.05, 0.14), Vector3(0, 0.07, -0.02), Color(0.3, 0.3, 0.32)],     # scope
+		[Vector3(0.05, 0.13, 0.06), Vector3(0, -0.1, 0.06), Color(0.15, 0.15, 0.16)],    # grip
+		[Vector3(0.06, 0.04, 0.16), Vector3(0, -0.05, -0.17), Color(0.55, 0.55, 0.58)],  # handguard
+		[Vector3(0.08, 0.1, 0.1), Vector3(0.05, -0.12, 0.1), Color(0.9, 0.9, 0.88)],     # white glove/hand
+	]
+	for pt in parts:
+		var mi := MeshInstance3D.new()
+		var b := BoxMesh.new()
+		b.size = pt[0]
+		mi.mesh = b
+		var m := StandardMaterial3D.new()
+		m.albedo_color = pt[2]
+		mi.material_override = m
+		mi.position = pt[1]
+		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		vm.add_child(mi)
+	return vm
 var mech_cs: CollisionShape3D = null
 var _mech_t := 0.0
 const MECH_SPEED := 4.5
@@ -419,7 +448,14 @@ func _place_camera() -> void:
 		return
 	var fp := first_person and in_mech < 0
 	cam.cull_mask = (0xFFFFF & ~2) if fp else 0xFFFFF
-	pivot.position.y = 3.6 if in_mech >= 0 else 1.6
+	if viewmodel == null:
+		viewmodel = _build_viewmodel()
+	viewmodel.visible = fp and state == 0
+	viewmodel.position.z = -0.42 + (0.04 if shot_t > 0.25 else 0.0)   # tiny kick per shot
+	# mech: camera eye ~1.4 m above the cockpit roof and offset right, so the walker sits
+	# in the lower-left of the frame and the crosshair has clear sight to the horizon
+	pivot.position.y = 5.2 if in_mech >= 0 else 1.6
+	spring.position.x = 1.4 if in_mech >= 0 else 0.75
 	if fp:
 		cam.position = Vector3(0.0, 0.05, -0.3)
 		return
