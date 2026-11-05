@@ -1,3 +1,18 @@
 .godot/
 *.import
 export/
+# Build / deploy artifacts (keep source lean)
+*.zip
+node_modules/
+relay/node_modules/
+.godot/
+*.import
+export/
+/cloudflare/public/*
+!/cloudflare/public/README.txt
+/droid-siege-cf/
+*.wasm
+*.wasm.gz
+*.pck
+tools/live_relay_*.gd
+tools/live_relay_*.gd.uid
