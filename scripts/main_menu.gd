@@ -37,7 +37,7 @@ func _ready() -> void:
 	var outer := VBoxContainer.new()
 	outer.set_anchors_preset(Control.PRESET_FULL_RECT)
 	outer.alignment = BoxContainer.ALIGNMENT_CENTER
-	outer.add_theme_constant_override("separation", 10)
+	outer.add_theme_constant_override("separation", 6)
 	add_child(outer)
 	var title := Label.new()
 	title.text = "DROID SIEGE"
@@ -86,7 +86,7 @@ func _panel(holder: Control) -> VBoxContainer:
 	holder.add_child(panel)
 	var m := MarginContainer.new()
 	for side in ["left", "right", "top", "bottom"]:
-		m.add_theme_constant_override("margin_" + side, 18)
+		m.add_theme_constant_override("margin_" + side, 12)
 	panel.add_child(m)
 	var box := VBoxContainer.new()
 	box.add_theme_constant_override("separation", 10)
@@ -98,7 +98,8 @@ func _panel(holder: Control) -> VBoxContainer:
 func _btn(box: Control, text: String, cb: Callable) -> Button:
 	var b := Button.new()
 	b.text = text
-	b.custom_minimum_size = Vector2(0, 44)
+	b.custom_minimum_size = Vector2(0, 36)
+	b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	b.pressed.connect(cb)
 	box.add_child(b)
 	return b
@@ -158,10 +159,16 @@ func _build_main(holder: Control) -> Control:
 	row.add_child(diff_opt)
 	Game.build_control_options(box)
 	_btn(box, "Singleplayer Mission", func(): Game.write_save(); Game.start_singleplayer())
-	_btn(box, "Multiplayer (Host / Join)", func(): _show("mp"))
-	_btn(box, "Armory (Upgrades & Grenades)", func(): _show("shop"))
-	_btn(box, "How to Play", func(): _show("help"))
-	_btn(box, "Quit", func(): Game.write_save(); get_tree().quit())
+	# secondary buttons two per row so the card fits short windows even with keyboard options open
+	var grid := GridContainer.new()
+	grid.columns = 2
+	grid.add_theme_constant_override("h_separation", 6)
+	grid.add_theme_constant_override("v_separation", 6)
+	box.add_child(grid)
+	_btn(grid, "Multiplayer (Host / Join)", func(): _show("mp"))
+	_btn(grid, "Armory (Upgrades)", func(): _show("shop"))
+	_btn(grid, "How to Play", func(): _show("help"))
+	_btn(grid, "Quit", func(): Game.write_save(); get_tree().quit())
 	credits_label = _lbl(box, "")
 	return box
 
@@ -316,7 +323,7 @@ func _refresh_shop() -> void:
 	var grow := HBoxContainer.new()
 	var gl := Label.new()
 	gl.custom_minimum_size = Vector2(300, 0)
-	gl.text = "Thermal Detonator  x%d/%d\nArea damage, wrecks droideka shields" % [Game.save["grenades"], Game.MAX_GRENADES]
+	gl.text = "Thermal Detonators: start every match with %d/%d (tier)\nArea damage, wrecks droideka shields" % [Game.save["grenades"], Game.MAX_GRENADES]
 	grow.add_child(gl)
 	var gb := Button.new()
 	gb.custom_minimum_size = Vector2(150, 40)

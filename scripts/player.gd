@@ -679,11 +679,10 @@ func _start_reload() -> void:
 func _throw_grenade() -> void:
 	if grenades <= 0 or grenade_cd > 0.0:
 		if grenades <= 0:
-			Game.world.show_message("No grenades! Buy more in the Armory.")
+			Game.world.show_message("Out of grenades! They refill next match (upgrade the tier in the Armory).")
 		return
 	grenade_cd = 1.0
 	grenades -= 1
-	Game.save["grenades"] = grenades
 	Game.write_save()
 	var fwd := -cam.global_transform.basis.z if cam != null else -global_transform.basis.z
 	var vel := fwd * 17.0 + Vector3(0, 4.0, 0)

@@ -267,6 +267,7 @@ func load_save() -> void:
 						save[k] = d[k]
 	for k in ["credits", "dmg", "rate", "mag", "armor", "grenades", "missions", "wins"]:
 		save[k] = int(save[k])
+	save["grenades"] = maxi(2, int(save["grenades"]))   # grenade tier (old saves may have been drained)
 	player_name = str(save["name"])
 	settings = {"map": int(save["map"]), "diff": int(save["diff"]), "mode": int(save["mode"])}
 	mouse_sensitivity = float(save["sens"])
