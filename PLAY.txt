@@ -32,6 +32,7 @@ CONTROLS
 - **Single-file HTML (download & open):** [DroidSiege.html](https://github.com/adamcantcodelol/droid-siege/releases/download/v1.0/DroidSiege.html) — double-click to play in any browser (`file://`), no install. Rebuild with `python3 tools/build_single_html.py`.
 - **Play in browser:** https://droid-siege.moeller-basil.workers.dev/
 - **Room-code relay (built in):** `wss://droid-siege.moeller-basil.workers.dev/ws`
+- **Backup relay (Render, free):** `wss://droid-siege-relay.onrender.com` — Multiplayer → Relay: Backup, or auto-fallback if Primary is blocked / room not found. Free Render may sleep; the game pings it on boot.
   Host → Multiplayer → Host Game → share the 5-letter code. Friends Join with Code.
   No setup, no paid plan — Cloudflare Workers Free + Durable Objects.
 - **Web pause:** Esc unlocks the browser mouse; the pause menu opens automatically. Use **Menu [P]**, or press **P** / **M**, then Resume to recapture the mouse.

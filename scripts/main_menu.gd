@@ -176,6 +176,19 @@ func _build_main(holder: Control) -> Control:
 func _build_mp(holder: Control) -> Control:
 	var box := _panel(holder)
 	_lbl(box, "MULTIPLAYER (up to 4 troopers)", 22)
+	var rrow := HBoxContainer.new()
+	box.add_child(rrow)
+	var rlab := Label.new()
+	rlab.text = "Relay:"
+	rrow.add_child(rlab)
+	var relay_opt := OptionButton.new()
+	relay_opt.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	relay_opt.add_item("Primary (Cloudflare — fast)")
+	relay_opt.add_item("Backup (Render — wakes ~15s)")
+	relay_opt.selected = int(Game.save.get("relay_pref", 0))
+	relay_opt.item_selected.connect(func(i): Game.save["relay_pref"] = i; Game.write_save())
+	rrow.add_child(relay_opt)
+	_lbl(box, "Join auto-tries the other relay if the room is not found. Custom Advanced URL disables auto-fallback.", 12)
 	_btn(box, "Host Game (get a room code)", _on_host_room)
 	_lbl(box, "Got a code from a friend?")
 	var row := HBoxContainer.new()
@@ -201,7 +214,7 @@ func _build_mp(holder: Control) -> Control:
 	box.add_child(adv)
 	adv_btn.pressed.connect(func(): adv.visible = not adv.visible)
 
-	_lbl(adv, "Relay server address (leave empty to use the built-in one%s):" % ("" if Game.RELAY_URL == "" else ": " + Game.RELAY_URL), 13)
+	_lbl(adv, "Custom relay URL (leave empty to use Primary/Backup above):", 13)
 	relay_edit = LineEdit.new()
 	relay_edit.text = str(Game.save.get("relay_url", ""))
 	relay_edit.placeholder_text = "wss://your-relay.onrender.com"

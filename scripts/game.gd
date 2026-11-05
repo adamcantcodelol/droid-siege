@@ -60,6 +60,8 @@ const DEFAULT_WS_PORT := 8080
 ## Room-code relay (relay/relay.js). Paste your deployed relay address here before exporting,
 ## e.g. "wss://droid-siege-relay.onrender.com". Players can also override it under Advanced.
 const RELAY_URL := "wss://droid-siege.moeller-basil.workers.dev/ws"
+## Free Render backup (auto-fallback when Cloudflare is blocked / room not found there).
+const BACKUP_RELAY_URL := "wss://droid-siege-relay.onrender.com"
 const RelayPeerScript = preload("res://scripts/relay_peer.gd")
 var room_code := ""
 var _pending_relay = null
@@ -252,7 +254,7 @@ func _bind(action: String, keys: Array, mouse_button: int = 0) -> void:
 # ---------------------------------------------------------------- save / upgrades
 func default_save() -> Dictionary:
 	return {"credits": 0, "dmg": 0, "rate": 0, "mag": 0, "armor": 0, "grenades": 2,
-		"missions": 0, "wins": 0, "name": "Trooper", "sens": 0.0025, "map": 0, "diff": 1, "controls": 0, "turn_speed": 2.6, "auto_fire": false, "aim_assist": true, "ws_url": "", "relay_url": "", "mode": 0, "quality": -1, "fp": false}
+		"missions": 0, "wins": 0, "name": "Trooper", "sens": 0.0025, "map": 0, "diff": 1, "controls": 0, "turn_speed": 2.6, "auto_fire": false, "aim_assist": true, "ws_url": "", "relay_url": "", "relay_pref": 0, "mode": 0, "quality": -1, "fp": false}
 
 
 func load_save() -> void:
@@ -444,23 +446,106 @@ func join_ws(url: String) -> String:
 
 func relay_url() -> String:
 	var u := str(save.get("relay_url", "")).strip_edges()
-	return u if u != "" else RELAY_URL
+	return u if u != "" else primary_relay()
+
+
+func primary_relay() -> String:
+	return BACKUP_RELAY_URL if int(save.get("relay_pref", 0)) == 1 else RELAY_URL
+
+
+func backup_relay() -> String:
+	return RELAY_URL if int(save.get("relay_pref", 0)) == 1 else BACKUP_RELAY_URL
+
+
+## Ordered relay candidates. Custom Advanced URL disables dual-fallback.
+func relay_candidates() -> Array:
+	var custom := str(save.get("relay_url", "")).strip_edges()
+	if custom != "":
+		return [custom]
+	var a := primary_relay()
+	var b := backup_relay()
+	var out: Array = []
+	if a != "":
+		out.append(a)
+	if b != "" and b != a:
+		out.append(b)
+	return out
+
+
+func _wake_backup_relay() -> void:
+	if BACKUP_RELAY_URL == "":
+		return
+	var http := HTTPRequest.new()
+	http.timeout = 25.0
+	add_child(http)
+	http.request_completed.connect(func(_r, _c, _h, _b): http.queue_free())
+	var u := BACKUP_RELAY_URL.replace("wss://", "https://").replace("ws://", "http://")
+	if u.ends_with("/ws"):
+		u = u.substr(0, u.length() - 3)
+	http.request(u + "/")
+
+
+var _relay_attempt_id := 0
+var _relay_using_backup := false
 
 
 ## Host through the relay: the relay hands back a short room code for friends to type.
+## Tries Primary then Backup (~3.5s / ~15s) unless a custom Advanced URL is set.
 func host_room() -> String:
 	leave_network()
-	if relay_url() == "":
+	var urls: Array = relay_candidates()
+	if urls.is_empty():
 		return "No relay server set. Open Advanced and paste the relay address (see README), or use Direct IP."
-	var peer = RelayPeerScript.new()
-	var err: int = peer.start_host(relay_url())
-	if err != OK:
-		return "Could not reach the relay (error %d)." % err
-	peer.room_ready.connect(_on_room_ready.bind(peer))
-	peer.relay_error.connect(func(msg): _pending_relay = null; net_status.emit(msg))
-	_pending_relay = peer
-	net_status.emit("Contacting relay for a room code... (a sleeping free server can take up to a minute)")
+	_relay_attempt_id += 1
+	_try_host(urls, 0, _relay_attempt_id)
+	net_status.emit("Contacting relay for a room code...")
 	return ""
+
+
+func _try_host(urls: Array, idx: int, attempt: int) -> void:
+	if attempt != _relay_attempt_id:
+		return
+	if idx >= urls.size():
+		_pending_relay = null
+		net_status.emit("Could not reach any relay. Check your network, or try Relay: Backup (Render) / Advanced.")
+		return
+	var url: String = urls[idx]
+	_relay_using_backup = (BACKUP_RELAY_URL != "" and url.find("onrender.com") >= 0)
+	var peer = RelayPeerScript.new()
+	var err: int = peer.start_host(url)
+	if err != OK:
+		_try_host(urls, idx + 1, attempt)
+		return
+	var done := {"v": false}
+	peer.room_ready.connect(func(code):
+		if done["v"] or attempt != _relay_attempt_id:
+			return
+		done["v"] = true
+		_on_room_ready(code, peer)
+	)
+	peer.relay_error.connect(func(msg):
+		if done["v"] or attempt != _relay_attempt_id:
+			return
+		done["v"] = true
+		if peer == _pending_relay:
+			_pending_relay = null
+		peer.close()
+		net_status.emit("Relay busy/unreachable — trying backup..." if idx + 1 < urls.size() else msg)
+		_try_host(urls, idx + 1, attempt)
+	)
+	_pending_relay = peer
+	var wait := 15.0 if _relay_using_backup else 3.5
+	net_status.emit(("Contacting backup relay (Render may need ~15s to wake)..." if _relay_using_backup else "Contacting relay for a room code...") )
+	get_tree().create_timer(wait).timeout.connect(func():
+		if done["v"] or attempt != _relay_attempt_id:
+			return
+		done["v"] = true
+		if peer == _pending_relay:
+			_pending_relay = null
+		peer.close()
+		net_status.emit("Relay timed out — trying backup..." if idx + 1 < urls.size() else "Relay timed out.")
+		_try_host(urls, idx + 1, attempt)
+	)
 
 
 func _on_room_ready(code: String, peer) -> void:
@@ -469,28 +554,93 @@ func _on_room_ready(code: String, peer) -> void:
 	multiplayer.multiplayer_peer = peer
 	online = true
 	players = {1: {"name": player_name}}
-	print("[relay] hosting room ", code)
-	net_status.emit("Room code: %s  -  tell your squad to type it in Join with Code." % code)
+	print("[relay] hosting room ", code, " backup=" , _relay_using_backup)
+	var tag := " (Backup)" if _relay_using_backup else ""
+	net_status.emit("Room code: %s%s  -  tell your squad to type it in Join with Code." % [code, tag])
 	lobby_changed.emit()
 
 
+## Join by room code. Tries Primary then Backup; also switches relays if the first
+## answers "No room with code" (host may have landed on the other free relay).
 func join_room(code: String) -> String:
 	leave_network()
-	if relay_url() == "":
+	var urls: Array = relay_candidates()
+	if urls.is_empty():
 		return "No relay server set. Open Advanced and paste the relay address (see README), or use Direct IP."
 	var clean := code.strip_edges().to_upper()
 	if clean.length() < 4:
 		return "Type the room code your host sees (5 letters/numbers)."
-	var peer = RelayPeerScript.new()
-	var err: int = peer.start_join(relay_url(), clean)
-	if err != OK:
-		return "Could not reach the relay (error %d)." % err
-	peer.relay_error.connect(func(msg): net_status.emit(msg))
+	_relay_attempt_id += 1
 	room_code = clean
+	_try_join(urls, 0, clean, _relay_attempt_id)
+	net_status.emit("Joining room %s ..." % clean)
+	return ""
+
+
+func _try_join(urls: Array, idx: int, clean: String, attempt: int) -> void:
+	if attempt != _relay_attempt_id:
+		return
+	if idx >= urls.size():
+		_pending_relay = null
+		net_status.emit("No room with code %s on Primary or Backup. Check the code with your host." % clean)
+		return
+	var url: String = urls[idx]
+	_relay_using_backup = (BACKUP_RELAY_URL != "" and url.find("onrender.com") >= 0)
+	var peer = RelayPeerScript.new()
+	var err: int = peer.start_join(url, clean)
+	if err != OK:
+		_try_join(urls, idx + 1, clean, attempt)
+		return
+	# Assign early so MultiplayerAPI sees connected_to_server / register_player (same as pre-fallback).
 	multiplayer.multiplayer_peer = peer
 	online = true
 	players = {}
-	return ""
+	_pending_relay = peer
+	var done := {"v": false}
+	peer.peer_connected.connect(func(id):
+		if id != 1 or done["v"] or attempt != _relay_attempt_id:
+			return
+		done["v"] = true
+		_pending_relay = null
+		print("[relay] joined room ", clean, " via ", url)
+		var tag := " (Backup)" if _relay_using_backup else ""
+		net_status.emit("Joined room %s%s." % [clean, tag])
+		lobby_changed.emit()
+	)
+	peer.relay_error.connect(func(msg):
+		if done["v"] or attempt != _relay_attempt_id:
+			return
+		done["v"] = true
+		_pending_relay = null
+		# Tear down this attempt without clearing the attempt id, then retry other relay.
+		if multiplayer.multiplayer_peer == peer:
+			peer.close()
+			multiplayer.multiplayer_peer = OfflineMultiplayerPeer.new()
+			online = false
+		var no_room: bool = str(msg).begins_with("No room with code")
+		if idx + 1 < urls.size():
+			net_status.emit("Trying the other relay for code %s..." % clean)
+			_try_join(urls, idx + 1, clean, attempt)
+		else:
+			net_status.emit(msg if no_room else str(msg))
+	)
+	var wait := 15.0 if _relay_using_backup else 3.5
+	get_tree().create_timer(wait).timeout.connect(func():
+		if done["v"] or attempt != _relay_attempt_id:
+			return
+		done["v"] = true
+		_pending_relay = null
+		if multiplayer.multiplayer_peer == peer:
+			peer.close()
+			multiplayer.multiplayer_peer = OfflineMultiplayerPeer.new()
+			online = false
+		if idx + 1 < urls.size():
+			net_status.emit("Trying the other relay for code %s..." % clean)
+			_try_join(urls, idx + 1, clean, attempt)
+		else:
+			net_status.emit("Could not join room %s (timed out)." % clean)
+	)
+
 
 
 func join_game(ip: String, port: int) -> String:
@@ -863,6 +1013,12 @@ func _start_test() -> void:
 		"pvp_client":
 			player_name = "BlueClient"
 			print("[test] pvp client err='%s'" % join_game("127.0.0.1", DEFAULT_PORT + 2))
+		"live_backup_host":
+			player_name = "BackupHost"
+			settings = {"map": 0, "diff": 1, "mode": 0}
+			save["relay_url"] = ""
+			save["relay_pref"] = 1
+			print("[test] live backup host err='%s'" % host_room())
 		"live_relay_host":
 			player_name = "LiveHost"
 			settings = {"map": 0, "diff": 1, "mode": 0}
@@ -998,9 +1154,9 @@ func _process(_delta: float) -> void:
 				_test_done = true
 				print("[test] PVP CLIENT FAIL timeout")
 				get_tree().quit(1)
-		"relay_host", "live_relay_host":
+		"relay_host", "live_relay_host", "live_backup_host":
 			if room_code != "":
-				var rpath := "/tmp/ds_live_code.txt" if test_mode == "live_relay_host" else "/tmp/ds_room_code.txt"
+				var rpath := "/tmp/ds_live_code.txt" if test_mode in ["live_relay_host", "live_backup_host"] else "/tmp/ds_room_code.txt"
 				if not FileAccess.file_exists(rpath):
 					var f := FileAccess.open(rpath, FileAccess.WRITE)
 					f.store_string(room_code)
