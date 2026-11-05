@@ -224,6 +224,7 @@ func _setup_input() -> void:
 	_bind("pause", [KEY_ESCAPE])
 	_bind("scoreboard", [KEY_TAB])
 	_bind("weapon1", [KEY_1])
+	_bind("view_toggle", [KEY_V])
 	_bind("weapon2", [KEY_2])
 	_bind("weapon_next", [KEY_X, KEY_C])
 	_bind("fire", [], MOUSE_BUTTON_LEFT)
@@ -246,7 +247,7 @@ func _bind(action: String, keys: Array, mouse_button: int = 0) -> void:
 # ---------------------------------------------------------------- save / upgrades
 func default_save() -> Dictionary:
 	return {"credits": 0, "dmg": 0, "rate": 0, "mag": 0, "armor": 0, "grenades": 2,
-		"missions": 0, "wins": 0, "name": "Trooper", "sens": 0.0025, "map": 0, "diff": 1, "controls": 0, "turn_speed": 2.6, "auto_fire": false, "aim_assist": true, "ws_url": "", "relay_url": "", "mode": 0, "quality": -1}
+		"missions": 0, "wins": 0, "name": "Trooper", "sens": 0.0025, "map": 0, "diff": 1, "controls": 0, "turn_speed": 2.6, "auto_fire": false, "aim_assist": true, "ws_url": "", "relay_url": "", "mode": 0, "quality": -1, "fp": false}
 
 
 func load_save() -> void:

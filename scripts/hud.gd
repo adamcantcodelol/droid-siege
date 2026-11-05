@@ -394,7 +394,12 @@ func _process(delta: float) -> void:
 				t += "\nNearest open post: %s (%d%%)  -  %s" % [world.POST_NAMES[near], int(world.post_progress[near] * 100.0),
 					_direction_text(lp, world.POSTS[near])]
 	elif world.phase == 3:
-		t = "SURVIVE! Gunship extraction in %ds" % int(ceil(world.timer))
+		if world.timer <= 0.0:
+			var me = world.local_player()
+			var d: float = world._flat_dist(me.global_position, world.LZ) if me != null else 0.0
+			t = "GUNSHIP LANDED! Board at the LZ (%dm)%s" % [int(d), "  - ABOARD, waiting for squad" if d < world.BOARD_RADIUS else ""]
+		else:
+			t = "SURVIVE! Gunship extraction in %ds" % int(ceil(world.timer))
 	if not world.versus:
 		t += "\nDroids destroyed: %d    Credits earned: %d    Droids active: %d" % [world.kills, world.earned,
 			world.enemies.size()]

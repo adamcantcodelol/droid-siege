@@ -17,6 +17,11 @@ const POST_NAMES := ["ALPHA", "BRAVO", "CHARLIE"]
 var LZ := Vector3(0, 0, 72)
 const CAPTURE_RADIUS := 7.0
 const EXTRACT_TIME := 120.0
+const PICKUP_TIME := 30.0
+const BOARD_RADIUS := 8.0
+var pickup := false
+var pickup_t := 0.0
+var board_hold := 0.0
 const MAP_HALF := 95.0
 
 var players := {}       # peer_id -> player node
@@ -266,6 +271,20 @@ func _build_post(i: int) -> void:
 
 
 func _build_gunship() -> Node3D:
+	var gs: Node3D = load("res://models/gunship.glb").instantiate()
+	var holder := Node3D.new()
+	holder.name = "Gunship"
+	holder.add_child(gs)
+	gs.scale = Vector3.ONE * 1.2
+	var light := OmniLight3D.new()
+	light.light_color = Color(1, 0.3, 0.2)
+	light.omni_range = 12
+	light.position = Vector3(0, -2, 0)
+	holder.add_child(light)
+	return holder
+
+
+func _build_gunship_boxes() -> Node3D:
 	var root := Node3D.new()
 	root.name = "Gunship"
 	var hull_col := Color(0.82, 0.84, 0.78)
@@ -483,11 +502,28 @@ func _server_tick(delta: float) -> void:
 					Game.net_all("announce", ["Post %s captured! %d to go." % [POST_NAMES[i], 3 - phase]])
 	elif phase == 3:
 		timer -= delta * test_speed
-		if timer <= 0.0:
+		if timer <= 0.0 and not pickup:
 			timer = 0.0
-			earned += int(500 * float(DIFF["credits"]))
-			_end_mission(true)
-			return
+			pickup = true
+			pickup_t = PICKUP_TIME
+			Game.net_all("announce", ["The gunship has landed! Get to the LZ and board!"])
+		if pickup:
+			# Troop transport pickup: win once every standing trooper is aboard (within the LZ pad)
+			pickup_t -= delta * test_speed
+			var standing := 0
+			var aboard := 0
+			for p in players.values():
+				if p.state == 0:
+					standing += 1
+					if _flat_dist(p.global_position, LZ) < BOARD_RADIUS:
+						aboard += 1
+			board_hold = board_hold + delta * test_speed if (standing > 0 and aboard == standing) else 0.0
+			if board_hold > 1.5 or pickup_t <= 0.0:
+				earned += int((500 if aboard > 0 else 250) * float(DIFF["credits"]))
+				if aboard > 0:
+					Game.net_all("announce", ["%d trooper(s) aboard. Dust off!" % aboard])
+				_end_mission(aboard > 0 or players.size() == 0)
+				return
 
 	# Enemy AI
 	# AI budget: droids >55 m from every trooper think at 1/3 rate (accumulated delta, staggered by id)
@@ -999,7 +1035,9 @@ func _update_visuals(delta: float) -> void:
 	if phase >= 3:
 		var t := clampf(timer / 25.0, 0.0, 1.0)
 		gunship.visible = timer < 25.0 or ended
-		var target_y := 6.0 + 74.0 * t
+		var target_y := (2.2 if timer <= 0.0 else 6.0) + 74.0 * t
+		if ended and timer <= 0.0:
+			target_y = 40.0   # lift off
 		gunship.position.y = lerpf(gunship.position.y, target_y, minf(1.0, delta * 2.0))
 		gunship.rotation.y += delta * 0.05 * t
 
@@ -1034,6 +1072,9 @@ func _test_autopilot(delta: float) -> void:
 		lp.god = true
 		if phase < 3:
 			lp.global_position = POSTS[nearest_open_post(lp.global_position)] + Vector3(1, 0.5, 1)
+			lp.velocity = Vector3.ZERO
+		elif pickup:
+			lp.global_position = LZ + Vector3(2, 0.5, 2)   # board the gunship
 			lp.velocity = Vector3.ZERO
 		test_cd -= delta
 		if test_cd <= 0.0 and enemies.size() > 0:
@@ -1454,4 +1495,22 @@ func _test_camview(lp) -> void:
 	var held: bool = lp.is_aiming and lp.char_model.cur.ends_with("|hold") and lp.char_model.ap.speed_scale == 0.0
 	print("[test] camview ADS no-fire: aiming=%s anim=%s speed=%.1f" % [lp.is_aiming, lp.char_model.cur, lp.char_model.ap.speed_scale])
 	Input.action_release("kb_aim")
-	Game.finish_test(ok and held, "CAMVIEW local trooper visible in third person + ADS without recoil")
+	await get_tree().physics_frame
+	Input.action_press("kb_aim")
+	await get_tree().physics_frame
+	Input.action_release("kb_aim")
+	# first person (V): camera at the eyes, own body culled from the camera only
+	Input.action_press("view_toggle")
+	await get_tree().physics_frame
+	Input.action_release("view_toggle")
+	await get_tree().process_frame
+	var eye_d: float = lp.cam.global_position.distance_to(lp.global_position + Vector3(0, 1.65, 0))
+	var fp_ok: bool = lp.first_person and eye_d < 0.5 and (lp.cam.cull_mask & 2) == 0 and lp.char_model.meshes[0].layers == 2
+	print("[test] camview first person: on=%s cam->eyes=%.2f body_culled=%s camlocal=%s pivot=%s cam=%s p=%s" % [lp.first_person, eye_d, (lp.cam.cull_mask & 2) == 0, lp.cam.position, lp.pivot.global_position, lp.cam.global_position, lp.global_position])
+	Input.action_press("view_toggle")
+	await get_tree().physics_frame
+	Input.action_release("view_toggle")
+	await get_tree().process_frame
+	fp_ok = fp_ok and not lp.first_person and (lp.cam.cull_mask & 2) != 0
+	Game.save["fp"] = false
+	Game.finish_test(ok and held and fp_ok, "CAMVIEW local trooper visible in third person + ADS without recoil")

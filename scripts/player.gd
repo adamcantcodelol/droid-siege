@@ -91,6 +91,7 @@ func _ready() -> void:
 		cam.near = 0.05
 		pivot.add_child(cam)   # placed by _place_camera() from the spring's hit length
 		cam.current = true
+		set_first_person.call_deferred(bool(Game.save.get("fp", false)))
 	else:
 		name_label = Label3D.new()
 		name_label.text = display_name
@@ -293,6 +294,9 @@ func _physics_process(delta: float) -> void:
 			_start_reload()
 		if Input.is_action_just_pressed("grenade"):
 			_throw_grenade()
+		if Input.is_action_just_pressed("view_toggle"):
+			set_first_person(not first_person)
+			Game.write_save()
 		if Input.is_action_just_pressed("weapon1"):
 			switch_weapon(0)
 		elif Input.is_action_just_pressed("weapon2"):
@@ -330,8 +334,27 @@ func _physics_process(delta: float) -> void:
 const MIN_CAM_DIST := 1.25
 
 
+var first_person := false
+
+
+## V toggles first person: camera at the eyes, own body hidden from this camera (render layer 2)
+## while it still casts a shadow and stays visible to everyone else.
+func set_first_person(on: bool) -> void:
+	first_person = on
+	Game.save["fp"] = on
+	if char_model != null:
+		for mi in char_model.meshes:
+			mi.layers = 2
+	if cam != null:
+		cam.cull_mask = (0xFFFFF & ~2) if on else 0xFFFFF
+		_place_camera()
+
+
 func _place_camera() -> void:
 	if cam == null:
+		return
+	if first_person:
+		cam.position = Vector3(0.0, 0.05, -0.3)
 		return
 	var d := clampf(spring.get_hit_length(), MIN_CAM_DIST, maxf(spring.spring_length, MIN_CAM_DIST))
 	cam.position = spring.position + Vector3(0, 0, d)
