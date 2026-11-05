@@ -1,3 +1,12 @@
+
+## Live multiplayer (free)
+- **Play in browser:** https://droid-siege.moeller-basil.workers.dev/
+- **Room-code relay (built in):** `wss://droid-siege.moeller-basil.workers.dev/ws`
+  Host → Multiplayer → Host Game → share the 5-letter code. Friends Join with Code.
+  No setup, no paid plan — Cloudflare Workers Free + Durable Objects.
+- **Web pause:** Esc unlocks the browser mouse; the pause menu opens automatically. Use **Menu [P]**, or press **P** / **M**, then Resume to recapture the mouse.
+  Advanced still lets you override the relay URL if you self-host.
+
 # Droid Siege
 
 A free, multiplayer third-person clone trooper shooter made in **Godot 4.7.2**. It supports co-op against droids (1-4 players) and Versus PvP (1v1 up to 2v2, or Free-for-All). All art is primitive meshes and CSG, and all sounds are generated tones, so there are no external assets.

@@ -25,3 +25,11 @@ CONTROLS
 - Trackpad / Keyboard Only (pick in main menu or pause menu): WASD move, Arrows or J/L turn,
   I/K look up/down, F or Ctrl fire (trackpad tap fires too), Q or Alt toggle aim,
   optional aim assist and auto-fire.
+
+## Live multiplayer (free)
+- **Play in browser:** https://droid-siege.moeller-basil.workers.dev/
+- **Room-code relay (built in):** `wss://droid-siege.moeller-basil.workers.dev/ws`
+  Host → Multiplayer → Host Game → share the 5-letter code. Friends Join with Code.
+  No setup, no paid plan — Cloudflare Workers Free + Durable Objects.
+- **Web pause:** Esc unlocks the browser mouse; the pause menu opens automatically. Use **Menu [P]**, or press **P** / **M**, then Resume to recapture the mouse.
+  Advanced still lets you override the relay URL if you self-host.

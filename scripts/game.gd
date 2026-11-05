@@ -59,7 +59,7 @@ var server_is_dedicated := false # (clients) the server we joined is dedicated: 
 const DEFAULT_WS_PORT := 8080
 ## Room-code relay (relay/relay.js). Paste your deployed relay address here before exporting,
 ## e.g. "wss://droid-siege-relay.onrender.com". Players can also override it under Advanced.
-const RELAY_URL := ""
+const RELAY_URL := "wss://droid-siege.moeller-basil.workers.dev/ws"
 const RelayPeerScript = preload("res://scripts/relay_peer.gd")
 var room_code := ""
 var _pending_relay = null
@@ -113,8 +113,8 @@ func _ready() -> void:
 
 func controls_help() -> String:
 	if control_mode == 1:
-		return "TRACKPAD / KEYBOARD: WASD move, Arrows or J/L turn + I/K look, F or Ctrl fire (trackpad tap also fires), Q or Alt toggle aim, Shift sprint, Space jump, R reload, G grenade, E (hold) revive, Esc pause. Aim assist pulls toward droids near the crosshair%s." % (", auto-fire ON" if auto_fire else "")
-	return "MOUSE + KEYBOARD: WASD move, Mouse look, Left click fire, Right click aim, Shift sprint, Space jump, R reload, G grenade, E (hold) revive, Esc pause."
+		return "TRACKPAD / KEYBOARD: WASD move, Arrows or J/L turn + I/K look, F or Ctrl fire (trackpad tap also fires), Q or Alt toggle aim, Shift sprint, Space jump, R reload, G grenade, E (hold) revive, Esc/P/M or Menu button pause. Aim assist pulls toward droids near the crosshair%s." % (", auto-fire ON" if auto_fire else "")
+	return "MOUSE + KEYBOARD: WASD move, Mouse look, Left click fire, Right click aim, Shift sprint, Space jump, R reload, G grenade, E (hold) revive, Esc/P/M or Menu button pause. On the web Esc unlocks the mouse and opens pause — click Resume to recapture."
 
 
 ## Adds the Controls selector (+ turn speed, aim assist, auto-fire) to a menu box.
@@ -226,7 +226,7 @@ func _setup_input() -> void:
 	_bind("reload", [KEY_R])
 	_bind("grenade", [KEY_G])
 	_bind("interact", [KEY_E])
-	_bind("pause", [KEY_ESCAPE])
+	_bind("pause", [KEY_ESCAPE, KEY_P, KEY_M])
 	_bind("scoreboard", [KEY_TAB])
 	_bind("weapon1", [KEY_1])
 	_bind("view_toggle", [KEY_V])
@@ -863,6 +863,22 @@ func _start_test() -> void:
 		"pvp_client":
 			player_name = "BlueClient"
 			print("[test] pvp client err='%s'" % join_game("127.0.0.1", DEFAULT_PORT + 2))
+		"live_relay_host":
+			player_name = "LiveHost"
+			settings = {"map": 0, "diff": 1, "mode": 0}
+			save["relay_url"] = "wss://droid-siege.moeller-basil.workers.dev/ws"
+			print("[test] live relay host err='%s'" % host_room())
+		"live_relay_client":
+			player_name = "LiveClient"
+			settings = {"map": 0, "diff": 1, "mode": 0}
+			save["relay_url"] = "wss://droid-siege.moeller-basil.workers.dev/ws"
+			var code2 := ""
+			for i in 50:
+				await get_tree().create_timer(0.1).timeout
+				if FileAccess.file_exists("/tmp/ds_live_code.txt"):
+					code2 = FileAccess.get_file_as_string("/tmp/ds_live_code.txt").strip_edges()
+					break
+			print("[test] live relay client joining code=%s err='%s'" % [code2, join_room(code2)])
 		"relay_host":
 			player_name = "RelayHost"
 			save["relay_url"] = "ws://127.0.0.1:9081"
@@ -982,11 +998,13 @@ func _process(_delta: float) -> void:
 				_test_done = true
 				print("[test] PVP CLIENT FAIL timeout")
 				get_tree().quit(1)
-		"relay_host":
-			if room_code != "" and not FileAccess.file_exists("/tmp/ds_room_code.txt"):
-				var f := FileAccess.open("/tmp/ds_room_code.txt", FileAccess.WRITE)
-				f.store_string(room_code)
-				f.close()
+		"relay_host", "live_relay_host":
+			if room_code != "":
+				var rpath := "/tmp/ds_live_code.txt" if test_mode == "live_relay_host" else "/tmp/ds_room_code.txt"
+				if not FileAccess.file_exists(rpath):
+					var f := FileAccess.open(rpath, FileAccess.WRITE)
+					f.store_string(room_code)
+					f.close()
 			if not in_mission and players.size() >= 2:
 				print("[test] relay host: client joined via code, starting mission")
 				start_mission()
@@ -1026,7 +1044,7 @@ func _process(_delta: float) -> void:
 				_test_done = true
 				print("[test] WS CLIENT FAIL timeout")
 				get_tree().quit(1)
-		"client", "relay_client":
+		"client", "relay_client", "live_relay_client":
 			if world != null and world.enemy_state_packets > 30 and world.players.size() == 2 \
 					and world.enemies.size() > 0 and world.remote_state_packets > 10:
 				_test_done = true

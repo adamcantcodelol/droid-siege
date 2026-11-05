@@ -229,6 +229,16 @@ func _resume() -> void:
 		get_tree().paused = false
 	if not Game.is_headless():
 		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+	_web_was_captured = Input.mouse_mode == Input.MOUSE_MODE_CAPTURED
+
+
+func _open_pause() -> void:
+	if end_panel.visible or pause_panel.visible:
+		return
+	pause_panel.visible = true
+	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+	if not Game.online:
+		get_tree().paused = true
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -236,10 +246,7 @@ func _unhandled_input(event: InputEvent) -> void:
 		if pause_panel.visible:
 			_resume()
 		else:
-			pause_panel.visible = true
-			Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
-			if not Game.online:
-				get_tree().paused = true
+			_open_pause()
 		get_viewport().set_input_as_handled()
 
 
@@ -335,6 +342,15 @@ func show_end(win: bool, credits: int, kills: int) -> void:
 
 func _process(delta: float) -> void:
 	_fps_tick()
+	# Web: browser steals Esc to exit pointer lock. When capture drops mid-mission, open pause
+	# so Resume (or P/M) can recapture the mouse.
+	if OS.has_feature("web") and Game.control_mode == 0 and not end_panel.visible and not pause_panel.visible:
+		var captured := Input.mouse_mode == Input.MOUSE_MODE_CAPTURED
+		if _web_was_captured and not captured:
+			_open_pause()
+		_web_was_captured = captured
+	elif pause_panel.visible:
+		_web_was_captured = false
 	msg_time -= delta
 	msg_label.modulate.a = clampf(msg_time, 0.0, 1.0)
 	hit_time -= delta
@@ -468,15 +484,29 @@ func _direction_text(lp, target: Vector3) -> String:
 
 # ---- FPS counter (F3 toggles, on by default)
 var _fps_label: Label
+var _menu_btn: Button
+var _web_was_captured := false
 var _f3_was := false
 
 
 func _fps_tick() -> void:
+	if _menu_btn == null:
+		_menu_btn = Button.new()
+		_menu_btn.text = "Menu [P]"
+		_menu_btn.set_anchors_and_offsets_preset(Control.PRESET_TOP_RIGHT)
+		_menu_btn.offset_left = -118
+		_menu_btn.offset_top = 8
+		_menu_btn.offset_right = -12
+		_menu_btn.offset_bottom = 36
+		_menu_btn.focus_mode = Control.FOCUS_NONE
+		_menu_btn.pressed.connect(_open_pause)
+		add_child(_menu_btn)
+	_menu_btn.visible = not end_panel.visible
 	if _fps_label == null:
 		_fps_label = Label.new()
 		_fps_label.set_anchors_and_offsets_preset(Control.PRESET_TOP_RIGHT)
 		_fps_label.offset_left = -110
-		_fps_label.offset_top = 60
+		_fps_label.offset_top = 42
 		_fps_label.offset_right = -12
 		_fps_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 		_fps_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
