@@ -290,7 +290,7 @@ func _spawn_mechs() -> void:
 	for spot in [LZ + Vector3(7, 0, -8)]:
 		var m := MechVisual.build()
 		var body := StaticBody3D.new()
-		body.name = "Body"
+		body.name = "Col"
 		body.collision_layer = 1
 		var cs := CollisionShape3D.new()
 		var bx := BoxShape3D.new()
@@ -318,7 +318,7 @@ func on_mech_enter(i: int, pid: int) -> void:
 		return
 	mech_pilot[i] = pid
 	mechs[i].visible = false
-	mechs[i].get_node("Body").collision_layer = 0
+	mechs[i].get_node("Col").collision_layer = 0
 	var p = players.get(pid)
 	if p != null:
 		p.in_mech = i
@@ -338,7 +338,7 @@ func on_mech_exit(i: int, pos: Vector3, ry: float) -> void:
 	mechs[i].global_position = pos
 	mechs[i].rotation.y = ry
 	mechs[i].visible = true
-	mechs[i].get_node("Body").collision_layer = 1
+	mechs[i].get_node("Col").collision_layer = 1
 
 
 func _build_gunship() -> Node3D:
@@ -1629,7 +1629,7 @@ func _test_camview(lp) -> void:
 	Input.action_release("view_toggle")
 	await get_tree().process_frame
 	var eye_d: float = lp.cam.global_position.distance_to(lp.global_position + Vector3(0, 1.65, 0))
-	var fp_ok: bool = lp.first_person and eye_d < 0.5 and (lp.cam.cull_mask & 2) == 0 and lp.char_model.meshes[0].layers == 2 and lp.viewmodel != null and lp.viewmodel.visible
+	var fp_ok: bool = lp.first_person and eye_d < 0.5 and (lp.cam.cull_mask & 2) == 0 and lp.char_model.meshes[0].layers == 2 and lp.deco.all(func(d): return d[0].get_children().all(func(m): return m.layers == 2)) and lp.viewmodel != null and lp.viewmodel.visible
 	print("[test] camview first person: on=%s cam->eyes=%.2f body_culled=%s camlocal=%s pivot=%s cam=%s p=%s" % [lp.first_person, eye_d, (lp.cam.cull_mask & 2) == 0, lp.cam.position, lp.pivot.global_position, lp.cam.global_position, lp.global_position])
 	Input.action_press("view_toggle")
 	await get_tree().physics_frame

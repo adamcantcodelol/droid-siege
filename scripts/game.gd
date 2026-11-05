@@ -925,6 +925,34 @@ func _start_test() -> void:
 					RenderingServer.get_current_rendering_method(), lp.global_position, lp.cam.global_position, lp.spring.get_hit_length(),
 					lp.model.is_visible_in_tree(), vis, cm.meshes.size(), lp.model.global_transform.basis.get_scale(), cm.scale,
 					(sk[0].global_transform * sk[0].get_bone_global_pose(0)).origin if sk.size() > 0 else null, lp.cam.cull_mask, cm.cur])
+			var view := OS.get_environment("DS_VIEW")
+			if lp != null and view != "":
+				lp.god = true
+				world.spawn_cd = 9999.0
+				if view.begins_with("mech"):
+					lp.global_position = world.mechs[0].global_position + Vector3(2, 0, 0)
+					world.on_mech_enter(0, lp.peer_id)
+					if view == "mechwalk":
+						Input.action_press("move_forward")
+				if view == "fp":
+					lp.set_first_person(true)
+					if OS.get_environment("DS_FIRE") != "":
+						Input.action_press("fire")
+				await get_tree().create_timer(1.2).timeout
+				if view in ["front", "mechfront", "mechwalk"]:
+					var c := Camera3D.new()
+					world.add_child(c)
+					var h := 4.5 if view.begins_with("mech") else 1.4
+					var d := 5.5 if view.begins_with("mech") else 2.0
+					var fwd: Vector3 = -lp.global_transform.basis.z
+					var side: Vector3 = lp.global_transform.basis.x
+					c.global_position = lp.global_position + fwd * d + side * d * 0.6 + Vector3(0, h * 0.8, 0)
+					c.look_at(lp.global_position + Vector3(0, h * 0.55, 0))
+					c.current = true
+					await get_tree().create_timer(0.3).timeout
+				if lp.deco.size() > 0:
+					print("[diag] player=%s head_deco=%s headbone=%s in_mech=%s" % [lp.global_position, lp.deco[0][0].global_position, (lp._skel.global_transform * lp._skel.get_bone_global_pose(lp.deco[0][1])).origin, lp.in_mech])
+				test_mode = test_mode + "_" + view
 			_save_shot("/tmp/ds_game_%s.png" % test_mode)
 			get_tree().quit(0)
 

@@ -161,18 +161,96 @@ func _build_model() -> void:
 	var body = CharModel.new()
 	body.name = "Body"
 	body.setup("res://models/soldier.glb", 1.85, {
-		"Character_Main": armor, "Pants": armor.darkened(0.08), "Skin": Color(0.12, 0.12, 0.14),
+		"Character_Main": armor, "Pants": armor.darkened(0.08), "Skin": armor.darkened(0.04),
 		"Grey": accent, "Red": accent, "Wood": Color(0.15, 0.15, 0.17), "DarkWood": Color(0.1, 0.1, 0.12)},
 		SOLDIER_ANIMS, WEAPON_MESHES, WEAPON_SHOW[0])
 	model.add_child(body)
 	char_model = body
+	_build_armor_deco(accent)
 	_shown_weapon = 0
 	muzzle = Node3D.new()
 	muzzle.position = Vector3(0.28, 1.27, -0.85)
 	model.add_child(muzzle)
 
 
+## Clone armour details that follow bones: T-visor + helmet ridge on the head, squad-coloured
+## pauldron on the left shoulder. Parented to the model (not the bone: the GLB armature is
+## scaled x100) and placed from the bone pose each frame. Render layer 2 so the first-person
+## camera never sees them (same as the body meshes).
+var deco: Array = []          # [node, bone_idx, offset]
+var _skel: Skeleton3D = null
+
+
+func _build_armor_deco(accent: Color) -> void:
+	var sk: Array = char_model.find_children("*", "Skeleton3D", true, false)
+	if sk.is_empty():
+		return
+	_skel = sk[0]
+	var black := StandardMaterial3D.new()
+	black.albedo_color = Color(0.04, 0.04, 0.05)
+	black.roughness = 0.2
+	var acc := StandardMaterial3D.new()
+	acc.albedo_color = accent
+	var head := Node3D.new()
+	model.add_child(head)
+	for p in [[Vector3(0.26, 0.06, 0.04), Vector3(0, 0.03, 0)], [Vector3(0.07, 0.16, 0.04), Vector3(0, -0.06, 0)]]:
+		var mi := MeshInstance3D.new()
+		var b := BoxMesh.new()
+		b.size = p[0]
+		mi.mesh = b
+		mi.material_override = black
+		mi.position = p[1] + Vector3(0, 0, 0.0)
+		head.add_child(mi)
+	var plate := MeshInstance3D.new()      # helmet faceplate (hides the cartoon face)
+	var plb := BoxMesh.new()
+	plb.size = Vector3(0.46, 0.4, 0.05)
+	plate.mesh = plb
+	var wm := StandardMaterial3D.new()
+	wm.albedo_color = Color(0.93, 0.93, 0.9)
+	plate.material_override = wm
+	plate.position = Vector3(0, -0.02, 0.03)
+	head.add_child(plate)
+	var ridge := MeshInstance3D.new()
+	var rb := BoxMesh.new()
+	rb.size = Vector3(0.05, 0.04, 0.34)
+	ridge.mesh = rb
+	ridge.material_override = acc
+	ridge.position = Vector3(0, 0.2, 0.17)
+	head.add_child(ridge)
+	deco.append([head, _skel.find_bone("Head_2"), HEAD_DECO_OFS])
+	var pad := MeshInstance3D.new()
+	var pb := BoxMesh.new()
+	pb.size = Vector3(0.2, 0.06, 0.24)
+	pad.mesh = pb
+	pad.material_override = acc
+	pad.rotation.z = 0.35
+	var sh := Node3D.new()
+	sh.add_child(pad)
+	model.add_child(sh)
+	deco.append([sh, _skel.find_bone("UpperArm.R"), SHOULDER_DECO_OFS])
+	for d in deco:
+		for mi in d[0].get_children():
+			mi.layers = 2
+			mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+
+
+const HEAD_DECO_OFS := Vector3(0, 0.2, -0.31)
+const SHOULDER_DECO_OFS := Vector3(0, 0.1, 0)
+
+
+func _place_deco() -> void:
+	if _skel == null:
+		return
+	for d in deco:
+		if d[1] < 0:
+			continue
+		var bp: Vector3 = (_skel.global_transform * _skel.get_bone_global_pose(d[1])).origin
+		d[0].global_position = bp + model.global_transform.basis * d[2]
+		d[0].global_rotation = model.global_rotation
+
+
 func _update_anim(delta: float) -> void:
+	_place_deco()
 	if char_model == null:
 		return
 	var flat := global_position - _last_pos
@@ -368,31 +446,84 @@ var viewmodel: Node3D = null
 ## First-person DC-15 style blaster: a few boxes parented to the camera, lower right, no shadows.
 func _build_viewmodel() -> Node3D:
 	var vm := Node3D.new()
-	vm.position = Vector3(0.2, -0.2, -0.42)
+	vm.position = VM_BASE
 	cam.add_child(vm)
+	var dark := Color(0.1, 0.1, 0.11)
+	var metal := Color(0.32, 0.33, 0.36)
+	var white := Color(0.88, 0.88, 0.85)
 	var parts := [
-		[Vector3(0.07, 0.09, 0.42), Vector3(0, 0, 0), Color(0.12, 0.12, 0.13)],          # receiver
-		[Vector3(0.035, 0.035, 0.32), Vector3(0, 0.015, -0.34), Color(0.2, 0.2, 0.22)],  # barrel
-		[Vector3(0.05, 0.05, 0.05), Vector3(0, 0.015, -0.5), Color(0.08, 0.08, 0.08)],   # muzzle
-		[Vector3(0.04, 0.05, 0.14), Vector3(0, 0.07, -0.02), Color(0.3, 0.3, 0.32)],     # scope
-		[Vector3(0.05, 0.13, 0.06), Vector3(0, -0.1, 0.06), Color(0.15, 0.15, 0.16)],    # grip
-		[Vector3(0.06, 0.04, 0.16), Vector3(0, -0.05, -0.17), Color(0.55, 0.55, 0.58)],  # handguard
-		[Vector3(0.08, 0.1, 0.1), Vector3(0.05, -0.12, 0.1), Color(0.9, 0.9, 0.88)],     # white glove/hand
+		# [mesh, pos, color, rot]
+		[Vector3(0.055, 0.075, 0.34), Vector3(0, 0, 0.02), dark, 0],          # receiver
+		["cyl", 0.022, 0.42, Vector3(0, 0.012, -0.34), metal],               # barrel
+		["cyl", 0.032, 0.05, Vector3(0, 0.012, -0.56), dark],                # muzzle
+		[Vector3(0.075, 0.012, 0.18), Vector3(0, 0.05, -0.24), dark, 0],      # cooling fins (top)
+		[Vector3(0.075, 0.012, 0.18), Vector3(0, 0.02, -0.24), dark, 0],
+		[Vector3(0.075, 0.012, 0.18), Vector3(0, -0.01, -0.24), dark, 0],
+		["cyl", 0.015, 0.12, Vector3(0, 0.06, -0.12), metal],                # scope tube
+		[Vector3(0.012, 0.035, 0.012), Vector3(0, 0.05, -0.5), dark, 0],      # front sight post
+		[Vector3(0.04, 0.11, 0.05), Vector3(0, -0.085, 0.07), dark, 0.25],    # grip
+		[Vector3(0.035, 0.06, 0.14), Vector3(0, -0.06, -0.12), metal, 0],     # mag / handguard
+		[Vector3(0.05, 0.05, 0.12), Vector3(0, -0.01, 0.22), dark, 0],        # stock
+		[Vector3(0.075, 0.09, 0.1), Vector3(0.02, -0.11, 0.1), white, 0.2],   # gloved hand (armour white)
+		[Vector3(0.07, 0.07, 0.09), Vector3(-0.01, -0.05, -0.18), white, 0],  # support hand
 	]
 	for pt in parts:
 		var mi := MeshInstance3D.new()
-		var b := BoxMesh.new()
-		b.size = pt[0]
-		mi.mesh = b
 		var m := StandardMaterial3D.new()
-		m.albedo_color = pt[2]
+		m.roughness = 0.45
+		if pt[0] is String:
+			var c := CylinderMesh.new()
+			c.top_radius = pt[1]
+			c.bottom_radius = pt[1]
+			c.height = pt[2]
+			c.radial_segments = 8
+			c.rings = 1
+			mi.mesh = c
+			mi.rotation.x = PI / 2
+			mi.position = pt[3]
+			m.albedo_color = pt[4]
+		else:
+			var b := BoxMesh.new()
+			b.size = pt[0]
+			mi.mesh = b
+			mi.position = pt[1]
+			m.albedo_color = pt[2]
+			mi.rotation.x = pt[3]
 		mi.material_override = m
-		mi.position = pt[1]
 		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		vm.add_child(mi)
 	return vm
+
+
+const VM_BASE := Vector3(0.2, -0.2, -0.45)
+var _vm_t := 0.0
+
+
+## Walk bob, crisp fire kick and a dip while reloading (local first person only).
+func _animate_viewmodel(delta: float) -> void:
+	if viewmodel == null or not viewmodel.visible:
+		return
+	var hs := Vector2(velocity.x, velocity.z).length()
+	var on := is_on_floor() and hs > 0.5
+	_vm_t += delta * (11.0 if is_sprinting else 8.0) * (1.0 if on else 0.0)
+	var amp := clampf(hs / SPEED, 0.0, 1.4) * (0.012 if not is_aiming else 0.003)
+	var target := VM_BASE + Vector3(cos(_vm_t * 0.5) * amp, -absf(sin(_vm_t * 0.5)) * amp, 0)
+	if is_aiming:
+		target = Vector3(0.0, -0.105, -0.3) + target - VM_BASE
+	var rot := Vector3.ZERO
+	if shot_t > 0.22:
+		var k := (shot_t - 0.22) / 0.08
+		target.z += 0.035 * k
+		rot.x += 0.06 * k
+	if reloading > 0.0:
+		target.y -= 0.12
+		rot.x -= 0.5
+		rot.z += 0.3
+	viewmodel.position = viewmodel.position.lerp(target, minf(1.0, delta * 18.0))
+	viewmodel.rotation = viewmodel.rotation.lerp(rot, minf(1.0, delta * 14.0))
 var mech_cs: CollisionShape3D = null
 var _mech_t := 0.0
+var _mech_prev_ry := 0.0
 const MECH_SPEED := 4.5
 const MECH_SPRINT := 6.5
 
@@ -414,7 +545,7 @@ func _shoot_mech() -> void:
 	shot_t = 0.3
 	fire_cd = 0.35
 	var aim := _aim_point()
-	var from: Vector3 = mech_vis.get_node("Muzzle").global_position if mech_vis != null else global_position + Vector3(0, 3, 0)
+	var from: Vector3 = mech_vis.get_node("Body/Gun/Muzzle").global_position if mech_vis != null else global_position + Vector3(0, 3, 0)
 	var to: Vector3 = aim["pos"]
 	Game.world.spawn_bolt(from, to, 0)
 	Game.net_all("bolt_fx", [from, to, 0], false)
@@ -451,7 +582,6 @@ func _place_camera() -> void:
 	if viewmodel == null:
 		viewmodel = _build_viewmodel()
 	viewmodel.visible = fp and state == 0
-	viewmodel.position.z = -0.42 + (0.04 if shot_t > 0.25 else 0.0)   # tiny kick per shot
 	# mech: camera eye ~1.4 m above the cockpit roof and offset right, so the walker sits
 	# in the lower-left of the frame and the crosshair has clear sight to the horizon
 	pivot.position.y = 5.2 if in_mech >= 0 else 1.6
@@ -466,6 +596,7 @@ func _place_camera() -> void:
 func _process(_delta: float) -> void:
 	if is_local:
 		_place_camera()
+		_animate_viewmodel(_delta)
 
 
 func _keyboard_look(delta: float) -> void:
@@ -577,7 +708,10 @@ func _update_pose(delta: float) -> void:
 		if pil:
 			var hv := Vector2(velocity.x, velocity.z).length() if is_local else net_pos.distance_to(position) * 10.0
 			_mech_t += delta
-			MechVisual.animate(mech_vis, _mech_t, clampf(hv / MECH_SPEED, 0.0, 1.0))
+			var turn := angle_difference(_mech_prev_ry, rotation.y) / maxf(delta, 0.001)
+			_mech_prev_ry = rotation.y
+			MechVisual.animate(mech_vis, _mech_t, clampf(hv / MECH_SPEED, 0.0, 1.0), turn)
+			MechVisual.flash(mech_vis, shot_t > 0.22)
 	_update_anim(delta)
 	if name_label != null:
 		name_label.text = display_name + ("  [DOWNED - hold E]" if state == 1 else ("  [KIA]" if state == 2 else ""))
