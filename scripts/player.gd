@@ -186,9 +186,14 @@ func _update_anim(delta: float) -> void:
 	if (anim_flags & 8) != 0:
 		char_model.play("jump")
 	elif _speed > 0.6:
-		char_model.play("run_shoot" if (firing or aiming) else "run", clampf(_speed / SPEED, 0.6, 1.5))
+		char_model.play("run_shoot" if firing else "run", clampf(_speed / SPEED, 0.6, 1.5))
+	elif firing:
+		char_model.play("aim")
+	elif aiming:
+		# Idle_Shoot is a looping fire cycle (with recoil); for ADS without firing hold its first frame
+		char_model.play("aim", 0.0)
 	else:
-		char_model.play("aim" if (firing or aiming) else "idle")
+		char_model.play("idle")
 
 
 # ------------------------------------------------------------------ input

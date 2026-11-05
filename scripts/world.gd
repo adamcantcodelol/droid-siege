@@ -1447,4 +1447,11 @@ func _test_camview(lp) -> void:
 				vis += 1
 		print("[test] camview at %s: spring_hit=%.2f cam->head=%.2f trooper_on_screen=%s visible_meshes=%d" % [sp[0], lp.spring.get_hit_length(), dist, on_screen, vis])
 		ok = ok and on_screen and dist >= 1.1 and vis >= 3
-	Game.finish_test(ok, "CAMVIEW local trooper visible in third person")
+	# ADS (Q / right mouse) without firing must hold a still aim pose, not loop the recoil cycle
+	Input.action_press("kb_aim")
+	for k in 20:
+		await get_tree().physics_frame
+	var held: bool = lp.is_aiming and lp.char_model.cur.ends_with("|hold") and lp.char_model.ap.speed_scale == 0.0
+	print("[test] camview ADS no-fire: aiming=%s anim=%s speed=%.1f" % [lp.is_aiming, lp.char_model.cur, lp.char_model.ap.speed_scale])
+	Input.action_release("kb_aim")
+	Game.finish_test(ok and held, "CAMVIEW local trooper visible in third person + ADS without recoil")

@@ -75,10 +75,13 @@ func play(logical: String, speed := 1.0) -> void:
 	var real: String = amap.get(logical, amap.get("idle", ""))
 	if real == "" or not ap.has_animation(real):
 		return
+	var key := real + ("|hold" if speed == 0.0 else "")
 	ap.speed_scale = speed
-	if real != cur:
-		cur = real
-		ap.play(real, 0.18)
+	if key != cur:
+		cur = key
+		ap.play(real, 0.0 if speed == 0.0 else 0.18)
+		if speed == 0.0:
+			ap.seek(0.0, true)
 
 
 func _process(delta: float) -> void:
