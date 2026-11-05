@@ -102,6 +102,7 @@ Performance: repeated props are batched into MultiMeshInstance3D (≈17-23 draw 
 `--test=mapcheck0/1/2` verifies the navmesh bakes and every post is reachable from the LZ, both team spawns, every droid entry point and the high ground.
 
 ## Weapons, enemies, graphics (latest)
+- **Mech (AT-RT walker):** parked beside the drop point. Walk up and Press E to enter, E again to exit. Steers like on foot (mouse or arrows/J L), W/S drive, Shift faster, fire = heavy cannon (3x damage, no reload), takes 35% damage, no jump/grenades; chase cam. Ejects you if you go down. Enter/exit and pilot pose are synced in multiplayer.
 - **Modes:** Co-op Droid Siege, Co-op Horde Survival (4 min hold-out, also solo), Versus Team Deathmatch (1v1-2v2), Versus Free-for-All. Solo modes are picked next to the map on the main menu; lobby hosts pick any mode.
 - **Movement:** snappier accel/stop, heavier fall, coyote time + jump buffering, tap jump for a short hop.
 - **View:** V toggles first person (saved). **Extraction:** when the timer ends the gunship lands at the LZ; everyone still standing must board (stand on the pad) within 30 s.

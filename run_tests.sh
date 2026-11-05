@@ -13,6 +13,7 @@ $G --headless --path . -- --test=kbtest | grep "\[test\]"
 $G --headless --path . -- --test=weapons | grep "\[test\]"
 $G --headless --path . -- --test=hitbox | grep "\[test\]"
 $G --headless --path . -- --test=camview | grep "\[test\]"
+$G --headless --path . -- --test=mech | grep "\[test\]"
 for m in 0 1 2; do $G --headless --path . -- --test=mapcheck$m | grep "\[test\] \(OK\|FAIL\|mapcheck\)"; done
 $G --headless --path . -- --test=smokefail | grep "\[test\]"
 $G --headless --path . -- --test=server > /tmp/ds_server.log 2>&1 &

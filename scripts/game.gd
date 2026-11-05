@@ -711,6 +711,18 @@ func player_state(pos: Vector3, ry: float, pitch: float, hp: float, st: int) -> 
 		world.apply_player_state(_sender(), pos, ry, pitch, hp, st)
 
 
+@rpc("any_peer", "call_remote", "reliable")
+func mech_enter(i: int, pid: int) -> void:
+	if world != null:
+		world.on_mech_enter(i, pid)
+
+
+@rpc("any_peer", "call_remote", "reliable")
+func mech_exit(i: int, pos: Vector3, ry: float) -> void:
+	if world != null:
+		world.on_mech_exit(i, pos, ry)
+
+
 @rpc("any_peer", "call_remote", "unreliable")
 func bolt_fx(from: Vector3, to: Vector3, kind: int) -> void:
 	if world != null:
@@ -823,7 +835,7 @@ func mission_end(win: bool, credits: int, kills: int) -> void:
 # ---------------------------------------------------------------- headless test harness
 func _start_test() -> void:
 	match test_mode:
-		"smoke", "smoke2", "smokefail", "walkcap", "kbtest", "weapons", "hitbox", "camview", "horde":
+		"smoke", "smoke2", "smokefail", "walkcap", "kbtest", "weapons", "hitbox", "camview", "horde", "mech":
 			player_name = "SmokeTester"
 			control_mode = 1 if test_mode == "kbtest" else 0
 			aim_assist = true

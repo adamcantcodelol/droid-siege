@@ -284,7 +284,7 @@ func _build_help(holder: Control) -> Control:
 	_lbl(box, "HOW TO PLAY", 22)
 	help_controls = _lbl(box, "", 14)
 	help_controls.add_theme_color_override("font_color", Color(1, 0.85, 0.5))
-	_lbl(box, "Capture command posts ALPHA, BRAVO and CHARLIE in any order by standing in their rings (more droids than troopers in a ring = CONTESTED, capture pauses). Then survive until the gunship arrives.\n\nB1 droids are weak. B2 super droids are tough. Droidekas roll in fast, then deploy a shield that blocks shots from the front: flank them, shoot them while rolling, or break the shield (grenades do double shield damage).\n\nIf every trooper is down, the mission fails. Earn credits and spend them in the Armory.", 14)
+	_lbl(box, "Capture command posts ALPHA, BRAVO and CHARLIE in any order by standing in their rings (more droids than troopers in a ring = CONTESTED, capture pauses). Then survive until the gunship arrives.\n\nB1 droids are weak. B2 super droids are tough. Droidekas roll in fast, then deploy a shield that blocks shots from the front: flank them, shoot them while rolling, or break the shield (grenades do double shield damage).\n\nDriveable walker parked by the drop point: Press E to enter mech, E again to exit. It is armoured, fires a heavy cannon, steers like on foot.\n\nIf every trooper is down, the mission fails. Earn credits and spend them in the Armory.", 14)
 	_btn(box, "Back", func(): _show("main"))
 	return box
 

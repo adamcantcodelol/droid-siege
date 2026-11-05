@@ -2,6 +2,7 @@ extends Node3D
 ## Mission scene. Builds the level procedurally, owns players/enemies, runs the
 ## server-authoritative mission logic (objectives, waves, enemy AI).
 
+const MechVisual := preload("res://scripts/mech.gd")
 const PlayerScript = preload("res://scripts/player.gd")
 const EnemyScript = preload("res://scripts/enemy.gd")
 const BoltScript = preload("res://scripts/bolt.gd")
@@ -93,7 +94,7 @@ func _ready() -> void:
 	ffa = int(Game.settings.get("mode", 0)) == 2
 	pvp_target = 10 if ffa else 15
 	LZ = M["lz"]
-	if Game.test_mode in ["smoke", "smoke2", "smokefail", "walkcap", "kbtest", "weapons", "hitbox", "camview", "horde"]:
+	if Game.test_mode in ["smoke", "smoke2", "smokefail", "walkcap", "kbtest", "weapons", "hitbox", "camview", "horde", "mech"]:
 		test_speed = 4.0
 		Engine.time_scale = 3.0
 	players_root = _child_node("Players")
@@ -217,6 +218,7 @@ func _build_level() -> void:
 	builder.flush()
 	print("[map] %s built: %d droid entry points, %d occluders" % [M["name"], droid_spawns.size(), builder.occluders])
 
+	_spawn_mechs()
 	gunship = _build_gunship()
 	gunship.position = LZ + Vector3(0, 80, 0)
 	gunship.visible = false
@@ -277,6 +279,66 @@ func _build_post(i: int) -> void:
 	builder.prop("crate", center + Vector3(-3, 0, -2), 1.1, 1.1, "box")
 	builder.prop("barrel", center + Vector3(-3.4, 0, 2.6), 0.0, 1.2, "cyl", Color.WHITE, 1.0, 0.45)
 	post_visuals.append({"ring_mat": ring_mat, "flag": flag, "flag_mat": flag_mat, "label": lbl, "center": center})
+
+
+## ---- Driveable mechs (AT-RT walker) ----
+var mechs: Array = []
+var mech_pilot: Array = []
+
+
+func _spawn_mechs() -> void:
+	for spot in [LZ + Vector3(7, 0, -8)]:
+		var m := MechVisual.build()
+		var body := StaticBody3D.new()
+		body.name = "Body"
+		body.collision_layer = 1
+		var cs := CollisionShape3D.new()
+		var bx := BoxShape3D.new()
+		bx.size = Vector3(1.8, 3.6, 2.0)
+		cs.shape = bx
+		cs.position.y = 2.0
+		body.add_child(cs)
+		m.add_child(body)
+		add_child(m)
+		m.global_position = spot
+		m.rotation.y = PI
+		mechs.append(m)
+		mech_pilot.append(0)
+
+
+func mech_near(pos: Vector3) -> int:
+	for i in mechs.size():
+		if mech_pilot[i] == 0 and mechs[i].global_position.distance_to(pos) < 4.0:
+			return i
+	return -1
+
+
+func on_mech_enter(i: int, pid: int) -> void:
+	if i < 0 or i >= mechs.size() or mech_pilot[i] != 0:
+		return
+	mech_pilot[i] = pid
+	mechs[i].visible = false
+	mechs[i].get_node("Body").collision_layer = 0
+	var p = players.get(pid)
+	if p != null:
+		p.in_mech = i
+		if p.is_local:
+			p.global_position = mechs[i].global_position
+			p.rotation.y = mechs[i].rotation.y
+			show_message("Mech online. Mouse/arrows steer, fire = cannon, E = exit.")
+
+
+func on_mech_exit(i: int, pos: Vector3, ry: float) -> void:
+	if i < 0 or i >= mechs.size():
+		return
+	var p = players.get(mech_pilot[i])
+	if p != null:
+		p.in_mech = -1
+	mech_pilot[i] = 0
+	mechs[i].global_position = pos
+	mechs[i].rotation.y = ry
+	mechs[i].visible = true
+	mechs[i].get_node("Body").collision_layer = 1
 
 
 func _build_gunship() -> Node3D:
@@ -1056,7 +1118,7 @@ func _test_autopilot(delta: float) -> void:
 	if Game.test_mode == "pvp_server":
 		_test_pvp_server(delta)
 		return
-	if Game.test_mode not in ["smoke", "smoke2", "smokefail", "walkcap", "kbtest", "weapons", "hitbox", "camview", "horde"]:
+	if Game.test_mode not in ["smoke", "smoke2", "smokefail", "walkcap", "kbtest", "weapons", "hitbox", "camview", "horde", "mech"]:
 		return
 	test_elapsed += delta
 	var lp = local_player()
@@ -1067,6 +1129,9 @@ func _test_autopilot(delta: float) -> void:
 		return
 	if Game.test_mode == "camview":
 		_test_camview(lp)
+		return
+	if Game.test_mode == "mech":
+		_test_mech(lp)
 		return
 	if Game.test_mode == "hitbox":
 		_test_hitbox(lp)
@@ -1472,6 +1537,54 @@ func _test_hitbox(lp) -> void:
 
 ## Local trooper must be in front of the camera and on screen: at the LZ, backed against the
 ## ALPHA flag pole and backed against a mesa wall (the cases that used to put the camera in the helmet).
+func _test_mech(lp) -> void:
+	if _t_stage > 0:
+		return
+	_t_stage = 1
+	lp.god = true
+	spawn_cd = 9999.0
+	lp.global_position = mechs[0].global_position + Vector3(2.5, 0.05, 0)
+	for k in 4:
+		await get_tree().physics_frame
+	var near := mech_near(lp.global_position) == 0
+	Input.action_press("interact")
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+	Input.action_release("interact")
+	var entered: bool = lp.in_mech == 0 and not mechs[0].visible
+	var p0: Vector3 = lp.global_position
+	Input.action_press("move_forward")
+	for k in 60:
+		await get_tree().physics_frame
+	Input.action_release("move_forward")
+	var moved: float = Vector2(lp.global_position.x - p0.x, lp.global_position.z - p0.z).length()
+	var r0: float = lp.rotation.y
+	var cm: int = Game.control_mode
+	Game.control_mode = 1   # keyboard-only steering (arrows / J L)
+	Input.action_press("turn_right")
+	for k in 20:
+		await get_tree().physics_frame
+	Input.action_release("turn_right")
+	Game.control_mode = cm
+	var turned := absf(angle_difference(r0, lp.rotation.y)) > 0.05
+	lp.fire_cd = 0.0
+	Input.action_press("kb_fire")
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+	Input.action_release("kb_fire")
+	var fired: bool = lp.fire_cd > 0.0
+	var camd: float = lp.cam.global_position.distance_to(lp.global_position)
+	await get_tree().physics_frame
+	Input.action_press("interact")
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+	Input.action_release("interact")
+	await get_tree().physics_frame
+	var exited: bool = lp.in_mech == -1 and mechs[0].visible and mechs[0].global_position.distance_to(p0) > 2.0
+	print("[test] mech near=%s entered=%s moved=%.1fm turned=%s fired=%s chase_cam=%.1fm exited=%s" % [near, entered, moved, turned, fired, camd, exited])
+	Game.finish_test(near and entered and moved > 2.0 and turned and fired and camd > 5.0 and exited, "MECH enter/drive/fire/exit")
+
+
 func _test_camview(lp) -> void:
 	if _t_stage > 0:
 		return

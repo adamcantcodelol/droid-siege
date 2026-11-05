@@ -2,6 +2,7 @@ extends CharacterBody3D
 ## Clone trooper. The owning peer simulates movement/shooting; other peers show
 ## an interpolated proxy from synced state.
 
+const MechVisual := preload("res://scripts/mech.gd")
 const SPEED := 6.0
 const SPRINT_SPEED := 10.0
 const AIM_SPEED := 3.5
@@ -261,6 +262,16 @@ func _physics_process(delta: float) -> void:
 		_keyboard_look(delta)
 	is_sprinting = act and Input.is_action_pressed("sprint") and input.y < -0.1 and not is_aiming and reloading <= 0.0
 	var speed := SPRINT_SPEED if is_sprinting else (AIM_SPEED if is_aiming else SPEED)
+	if in_mech >= 0:
+		speed = MECH_SPRINT if is_sprinting else MECH_SPEED
+		_jump_buf = 0.0
+	if act and Input.is_action_just_pressed("interact"):
+		if in_mech >= 0:
+			exit_mech()
+		elif revive_target == null:
+			var mi: int = Game.world.mech_near(global_position)
+			if mi >= 0:
+				Game.net_all("mech_enter", [mi, peer_id])
 	var dir := (transform.basis * Vector3(input.x, 0, input.y))
 	dir.y = 0
 	dir = dir.normalized()
@@ -270,7 +281,7 @@ func _physics_process(delta: float) -> void:
 	velocity.z = move_toward(velocity.z, dir.z * speed, accel * speed * delta)
 	_air_t = 0.0 if is_on_floor() else _air_t + delta
 	_jump_buf = JUMP_BUFFER if (act and Input.is_action_just_pressed("jump")) else maxf(0.0, _jump_buf - delta)
-	if _jump_buf > 0.0 and _air_t < COYOTE and velocity.y <= 0.5:
+	if in_mech < 0 and _jump_buf > 0.0 and _air_t < COYOTE and velocity.y <= 0.5:
 		velocity.y = JUMP_VELOCITY   # coyote time + jump buffering
 		_jump_buf = 0.0
 		_air_t = COYOTE
@@ -285,7 +296,7 @@ func _physics_process(delta: float) -> void:
 	# Camera zoom
 	if cam != null:
 		cam.fov = lerpf(cam.fov, 50.0 if is_aiming else (80.0 if is_sprinting else 72.0), minf(1.0, delta * 10.0))
-		spring.spring_length = lerpf(spring.spring_length, 1.8 if is_aiming else 3.2, minf(1.0, delta * 10.0))
+		spring.spring_length = lerpf(spring.spring_length, (5.0 if is_aiming else 7.0) if in_mech >= 0 else (1.8 if is_aiming else 3.2), minf(1.0, delta * 10.0))
 
 	# Weapon
 	if reloading > 0.0:
@@ -298,13 +309,15 @@ func _physics_process(delta: float) -> void:
 		want_fire = true
 	if act:
 		if want_fire and fire_cd <= 0.0 and reloading <= 0.0 and not is_sprinting:
-			if mag > 0:
+			if in_mech >= 0:
+				_shoot_mech()
+			elif mag > 0:
 				_shoot()
 			else:
 				_start_reload()
 		if Input.is_action_just_pressed("reload") and mag < mag_size:
 			_start_reload()
-		if Input.is_action_just_pressed("grenade"):
+		if Input.is_action_just_pressed("grenade") and in_mech < 0:
 			_throw_grenade()
 		if Input.is_action_just_pressed("view_toggle"):
 			set_first_person(not first_person)
@@ -335,7 +348,7 @@ func _physics_process(delta: float) -> void:
 	sync_cd -= delta
 	if sync_cd <= 0.0:
 		sync_cd = 0.066  # 15 Hz player state (was 20 Hz)
-		anim_flags = (1 if shot_t > 0.0 else 0) | (2 if is_aiming else 0) | (4 if is_sprinting else 0) | (8 if not is_on_floor() else 0) | (weapon << 4)
+		anim_flags = (1 if shot_t > 0.0 else 0) | (2 if is_aiming else 0) | (4 if is_sprinting else 0) | (8 if not is_on_floor() else 0) | (weapon << 4) | (64 if in_mech >= 0 else 0)
 		Game.net_all("player_state", [position, rotation.y, pitch, health, state | (anim_flags << 2)], false)
 
 
@@ -347,6 +360,45 @@ const MIN_CAM_DIST := 1.25
 
 
 var first_person := false
+var in_mech := -1          # index into world.mechs while piloting
+var mech_vis: Node3D = null
+var mech_cs: CollisionShape3D = null
+var _mech_t := 0.0
+const MECH_SPEED := 4.5
+const MECH_SPRINT := 6.5
+
+
+func piloting() -> bool:
+	return in_mech >= 0 if is_local else (anim_flags & 64) != 0
+
+
+func exit_mech() -> void:
+	if in_mech < 0:
+		return
+	var i := in_mech
+	Game.net_all("mech_exit", [i, global_position, rotation.y])
+	global_position += global_transform.basis.x * 2.4
+	_place_camera()
+
+
+func _shoot_mech() -> void:
+	shot_t = 0.3
+	fire_cd = 0.35
+	var aim := _aim_point()
+	var from: Vector3 = mech_vis.get_node("Muzzle").global_position if mech_vis != null else global_position + Vector3(0, 3, 0)
+	var to: Vector3 = aim["pos"]
+	Game.world.spawn_bolt(from, to, 0)
+	Game.net_all("bolt_fx", [from, to, 0], false)
+	Game.play_sfx("scatter", null, -4.0)
+	var col = aim["collider"]
+	var dmg := Game.weapon_damage() * 3.0
+	if col != null and col.has_method("get_peer_id"):
+		if Game.world.is_hostile(peer_id, col.get_peer_id()):
+			Game.net_server("req_pvp_damage", [col.get_peer_id(), dmg, global_position])
+			Game.world.hud.hit_marker(false)
+	elif col != null and col.has_method("get_enemy_id"):
+		Game.net_server("req_damage", [col.get_enemy_id(), dmg, global_position])
+		Game.world.hud.hit_marker(col.shield_blocks(global_position))
 
 
 ## V toggles first person: camera at the eyes, own body hidden from this camera (render layer 2)
@@ -365,7 +417,10 @@ func set_first_person(on: bool) -> void:
 func _place_camera() -> void:
 	if cam == null:
 		return
-	if first_person:
+	var fp := first_person and in_mech < 0
+	cam.cull_mask = (0xFFFFF & ~2) if fp else 0xFFFFF
+	pivot.position.y = 3.6 if in_mech >= 0 else 1.6
+	if fp:
 		cam.position = Vector3(0.0, 0.05, -0.3)
 		return
 	var d := clampf(spring.get_hit_length(), MIN_CAM_DIST, maxf(spring.spring_length, MIN_CAM_DIST))
@@ -469,7 +524,24 @@ func _update_pose(delta: float) -> void:
 		target_y = 0.3
 	model.rotation.x = lerp_angle(model.rotation.x, target_rot, minf(1.0, delta * 6.0))
 	model.position.y = lerpf(model.position.y, target_y, minf(1.0, delta * 6.0))
-	model.visible = true
+	var pil := piloting()
+	model.visible = not pil
+	if pil and mech_vis == null:
+		mech_vis = MechVisual.build()
+		add_child(mech_vis)
+		mech_cs = CollisionShape3D.new()
+		var bx := BoxShape3D.new()
+		bx.size = Vector3(1.6, 3.0, 1.8)
+		mech_cs.shape = bx
+		mech_cs.position.y = 2.1
+		add_child(mech_cs)
+	if mech_vis != null:
+		mech_vis.visible = pil
+		mech_cs.disabled = not pil
+		if pil:
+			var hv := Vector2(velocity.x, velocity.z).length() if is_local else net_pos.distance_to(position) * 10.0
+			_mech_t += delta
+			MechVisual.animate(mech_vis, _mech_t, clampf(hv / MECH_SPEED, 0.0, 1.0))
 	_update_anim(delta)
 	if name_label != null:
 		name_label.text = display_name + ("  [DOWNED - hold E]" if state == 1 else ("  [KIA]" if state == 2 else ""))
@@ -587,8 +659,12 @@ func _throw_grenade() -> void:
 func take_damage(dmg: float, from = null) -> void:
 	if god or state != 0 or not is_local:
 		return
+	if in_mech >= 0:
+		dmg *= 0.35   # walker armour
 	health -= dmg
 	since_hit = 0.0
+	if health <= 0.0:
+		exit_mech()
 	Game.play_sfx("hurt", null, -6.0)
 	if Game.world.hud != null:
 		Game.world.hud.damage_flash()

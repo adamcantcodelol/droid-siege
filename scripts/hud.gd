@@ -439,8 +439,13 @@ func _process(delta: float) -> void:
 		revive_bar.visible = lp.revive_progress > 0.0
 		revive_bar.value = lp.revive_progress / lp.REVIVE_TIME
 	else:
-		revive_label.text = ""
 		revive_bar.visible = false
+		if lp.in_mech >= 0:
+			revive_label.text = "Piloting mech  -  E to exit"
+		elif world.mech_near(lp.global_position) >= 0:
+			revive_label.text = "Press E to enter mech"
+		else:
+			revive_label.text = ""
 
 
 func _direction_text(lp, target: Vector3) -> String:
