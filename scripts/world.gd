@@ -1304,6 +1304,10 @@ func spawn_bolt(from: Vector3, to: Vector3, kind: int) -> void:
 			break
 
 
+var _fx_flash_mesh: SphereMesh
+var _fx_flash_mat_ally: StandardMaterial3D
+var _fx_flash_mat_enemy: StandardMaterial3D
+
 func _muzzle_flash(pos: Vector3, kind: int) -> void:
 	var c := Color(0.5, 0.75, 1.0) if kind != 1 else Color(1.0, 0.35, 0.2)
 	var l := OmniLight3D.new()
@@ -1311,14 +1315,23 @@ func _muzzle_flash(pos: Vector3, kind: int) -> void:
 	l.light_energy = 2.5
 	l.omni_range = 4.0
 	var mi := MeshInstance3D.new()
-	var sm := SphereMesh.new()
-	sm.radius = 0.12
-	sm.height = 0.24
-	var m := StandardMaterial3D.new()
-	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	m.albedo_color = c
-	sm.material = m
-	mi.mesh = sm
+	if _fx_flash_mesh == null:
+		_fx_flash_mesh = SphereMesh.new()
+		_fx_flash_mesh.radius = 0.12
+		_fx_flash_mesh.height = 0.24
+	if kind != 1:
+		if _fx_flash_mat_ally == null:
+			_fx_flash_mat_ally = StandardMaterial3D.new()
+			_fx_flash_mat_ally.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+			_fx_flash_mat_ally.albedo_color = Color(0.5, 0.75, 1.0)
+		mi.material_override = _fx_flash_mat_ally
+	else:
+		if _fx_flash_mat_enemy == null:
+			_fx_flash_mat_enemy = StandardMaterial3D.new()
+			_fx_flash_mat_enemy.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+			_fx_flash_mat_enemy.albedo_color = Color(1.0, 0.35, 0.2)
+		mi.material_override = _fx_flash_mat_enemy
+	mi.mesh = _fx_flash_mesh
 	l.add_child(mi)
 	fx_root.add_child(l)
 	l.global_position = pos
@@ -1890,8 +1903,50 @@ func _test_mech(lp) -> void:
 			ok = false
 			msgs.append("bailout dmg missing hp=%s" % lp.health)
 		lp.god = true
+	# Skin swap: BARC -> TX-130 must rebuild mesh + meta + collision (not stuck on speeder)
+	var barc_i := -1
+	var tank_i := -1
+	for i in mechs.size():
+		if mech_wreck_t[i] > 0.0:
+			continue
+		if mech_vtype[i] == 1 and barc_i < 0:
+			barc_i = i
+		if mech_vtype[i] == 2 and tank_i < 0:
+			tank_i = i
+	if barc_i >= 0:
+		lp.health = lp.max_health
+		lp.god = true
+		lp.global_position = mechs[barc_i].global_position + Vector3(2.5, 0.05, 0)
+		await get_tree().physics_frame
+		on_mech_enter(barc_i, lp.peer_id)
+		for k in 4:
+			await get_tree().physics_frame
+			await get_tree().process_frame
+		if not lp.model.visible or not lp._riding_open:
+			ok = false
+			msgs.append("BARC rider not visible")
+		if lp.mech_vis == null or int(lp.mech_vis.get_meta("vtype", -1)) != 1:
+			ok = false
+			msgs.append("BARC meta vtype fail")
+		lp.exit_mech()
+		await get_tree().physics_frame
+		if tank_i >= 0:
+			lp.global_position = mechs[tank_i].global_position + Vector3(2.5, 0.05, 0)
+			await get_tree().physics_frame
+			on_mech_enter(tank_i, lp.peer_id)
+			for k in 4:
+				await get_tree().physics_frame
+				await get_tree().process_frame
+			var meta_v := int(lp.mech_vis.get_meta("vtype", -1)) if lp.mech_vis != null else -1
+			var tank_size: Vector3 = MechVisual.stats(2)["size"]
+			var cs_ok := lp.mech_cs != null and lp.mech_cs.shape is BoxShape3D and (lp.mech_cs.shape as BoxShape3D).size.is_equal_approx(tank_size)
+			if meta_v != 2 or not cs_ok or lp.model.visible:
+				ok = false
+				msgs.append("tank swap fail meta=%s cs=%s vis=%s" % [meta_v, cs_ok, lp.model.visible])
+			lp.exit_mech()
+			await get_tree().physics_frame
 	print("[test] mech: vehicles=%d types=%s msgs=%s" % [mechs.size(), mech_vtype, msgs])
-	Game.finish_test(ok and mechs.size() >= 2, "MECH multi-vehicle hull HP + enter/fire/exit")
+	Game.finish_test(ok and mechs.size() >= 2, "MECH multi-vehicle hull HP + enter/fire/exit + skin swap")
 
 
 
@@ -2033,10 +2088,52 @@ func _test_classes(lp) -> void:
 			await get_tree().physics_frame
 		if lp.max_health < 80.0:
 			ok = false
+	# Baseline standing head height (Soldier.glb scaled ~1.85/2.26 → head ~1.15–1.25m)
+	var skc = lp._emote_skeleton()
+	lp.crouch_toggle = false
 	lp.is_crouching = false
+	lp.crouch_blend = 0.0
+	for k in 4:
+		await get_tree().physics_frame
+		await get_tree().process_frame
+	var head_stand0 := 0.0
+	if skc != null:
+		var hi0: int = skc.find_bone("Head_2")
+		if hi0 >= 0:
+			head_stand0 = (skc.global_transform * skc.get_bone_global_pose(hi0)).origin.y
 	lp.crouch_toggle = true
 	lp._update_crouch(0.5, true)
-	var crouched: bool = lp.is_crouching and lp.crouch_eye_y < 1.3
+	lp.crouch_blend = 1.0
+	for k in 8:
+		await get_tree().physics_frame
+		await get_tree().process_frame
+	var head_y := 9.0
+	var foot_y := 0.0
+	if skc != null:
+		var hi: int = skc.find_bone("Head_2")
+		var fi: int = skc.find_bone("Foot.L")
+		if hi >= 0:
+			head_y = (skc.global_transform * skc.get_bone_global_pose(hi)).origin.y
+		if fi >= 0:
+			foot_y = (skc.global_transform * skc.get_bone_global_pose(fi)).origin.y
+	var drop := head_stand0 - head_y
+	var crouched: bool = lp.is_crouching and lp.crouch_eye_y < 1.3 and drop >= 0.35 and head_y < 1.35 and foot_y >= -0.12 and foot_y <= 0.25
+	print("[test] crouch bones stand0=%.3f crouch=%.3f drop=%.3f foot=%.3f blend=%.2f" % [head_stand0, head_y, drop, foot_y, lp.crouch_blend])
+	lp.crouch_toggle = false
+	lp.is_crouching = false
+	lp._update_crouch(0.5, true)
+	lp.crouch_blend = 0.0
+	for k in 6:
+		await get_tree().physics_frame
+		await get_tree().process_frame
+	var head_stand := 0.0
+	if skc != null:
+		var hi2: int = skc.find_bone("Head_2")
+		if hi2 >= 0:
+			head_stand = (skc.global_transform * skc.get_bone_global_pose(hi2)).origin.y
+	if head_stand < head_stand0 - 0.08:
+		crouched = false
+		print("[test] stand restore FAIL head_y=%.3f stand0=%.3f" % [head_stand, head_stand0])
 	var maps_ok: bool = Game.MAPS.size() >= 6
 	# Dynamic controls strip
 	hud._hud_cache.erase("ctrl")

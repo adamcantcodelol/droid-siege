@@ -12,6 +12,7 @@ var cur := ""
 var _acc := 0.0
 var _frame := 0
 var meshes: Array = []
+var pose_cb: Callable
 
 
 ## path: res:// glb; height: target height (m); recolor: {material_name: Color};
@@ -95,6 +96,8 @@ func _process(delta: float) -> void:
 			return
 	ap.advance(_acc)
 	_acc = 0.0
+	if pose_cb.is_valid():
+		pose_cb.call()
 
 
 func set_shadows(on: bool) -> void:

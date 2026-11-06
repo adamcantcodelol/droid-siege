@@ -677,7 +677,7 @@ func _update_controls_hint(lp) -> void:
 		parts.append("[LMB] Fire")
 		if lp.veh_vtype == 2:
 			var scd: int = int(ceil(lp.veh_shell_cd))
-			parts.append("[G] Shell READY" if scd <= 0 else "[G] Shell %ds" % scd)
+			parts.append("[G/RMB] Shell READY" if scd <= 0 else "[G/RMB] Shell %ds" % scd)
 		parts.append("[E] Exit")
 		parts.append("[V] View")
 		parts.append("[Shift] Boost")

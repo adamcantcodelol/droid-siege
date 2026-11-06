@@ -165,6 +165,8 @@ var crouch_toggle := false
 var crouch_eye_y := 1.6
 var stand_eye_y := 1.6
 var slide_t := 0.0
+var crouch_blend := 0.0
+var _riding_open := false
 var _cap: CapsuleShape3D = null
 var _cs: CollisionShape3D = null
 var cls := 0
@@ -201,6 +203,7 @@ func _build_model() -> void:
 		SOLDIER_ANIMS, WEAPON_MESHES, WEAPON_SHOW[0])
 	model.add_child(body)
 	char_model = body
+	char_model.pose_cb = _apply_procedural_pose
 	_build_armor_deco(accent)
 	_shown_weapon = 0
 	muzzle = Node3D.new()
@@ -459,7 +462,10 @@ func _physics_process(delta: float) -> void:
 				_start_reload()
 		if Input.is_action_just_pressed("reload") and mag < mag_size:
 			_start_reload()
-		if Input.is_action_just_pressed("grenade") and in_mech < 0:
+		if in_mech >= 0 and veh_vtype == 2 and veh_shell_cd <= 0.0:
+			if Input.is_action_just_pressed("grenade") or Input.is_action_just_pressed("aim"):
+				_fire_tank_shell()
+		elif Input.is_action_just_pressed("grenade") and in_mech < 0:
 			_throw_grenade()
 		if Input.is_action_just_pressed("view_toggle"):
 			set_first_person(not first_person)
@@ -494,7 +500,6 @@ func _physics_process(delta: float) -> void:
 			_stop_emote()
 		else:
 			emote_t += delta
-			_animate_emote(delta)
 
 	# Health + officer aura regen
 	cmd_cd = maxf(0.0, cmd_cd - delta)
@@ -520,7 +525,7 @@ func _physics_process(delta: float) -> void:
 	sync_cd -= delta
 	if sync_cd <= 0.0:
 		sync_cd = 0.066  # 15 Hz player state (was 20 Hz)
-		anim_flags = (1 if shot_t > 0.0 else 0) | (2 if is_aiming else 0) | (4 if is_sprinting else 0) | (8 if not is_on_floor() else 0) | (weapon << 4) | (64 if in_mech >= 0 else 0) | (128 if is_crouching else 0) | ((emote_id & 7) << 8)
+		anim_flags = (1 if shot_t > 0.0 else 0) | (2 if is_aiming else 0) | (4 if is_sprinting else 0) | (8 if not is_on_floor() else 0) | (weapon << 4) | (64 if in_mech >= 0 else 0) | (128 if is_crouching else 0) | ((emote_id & 7) << 8) | ((veh_vtype & 3) << 11)
 		Game.net_all("player_state", [position, rotation.y, pitch, health, state | (anim_flags << 2)], false)
 
 
@@ -654,11 +659,15 @@ func _shoot_mech() -> void:
 	Game.play_sfx("scatter", null, -4.0)
 	var dmg := Game.weapon_damage(0) * float(st.get("dmg", 1.0))
 	_apply_hit(hit["collider"], dmg, "vehicle", {}, to)
-	# TX-130 concussion shell on cooldown
-	if veh_vtype == 2 and veh_shell_cd <= 0.0 and Input.is_action_just_pressed("grenade"):
-		veh_shell_cd = float(st.get("shell_cd", 6.0))
-		Game.net_server("req_micro_splash", [to, float(st.get("shell_dmg", 45.0)), float(st.get("shell_r", 4.5))])
-		Game.play_sfx("explosion", to, -6.0)
+
+
+func _fire_tank_shell() -> void:
+	var st: Dictionary = MechVisual.stats(2)
+	veh_shell_cd = float(st.get("shell_cd", 6.0))
+	var aim := _aim_point()
+	var to: Vector3 = aim["pos"]
+	Game.net_server("req_micro_splash", [to, float(st.get("shell_dmg", 45.0)), float(st.get("shell_r", 4.5))])
+	Game.play_sfx("explosion", to, -6.0)
 
 
 ## V toggles first person: camera at the eyes, own body hidden from this camera (render layer 2)
@@ -796,12 +805,17 @@ func _update_pose(delta: float) -> void:
 	if state != 0 and char_model == null:
 		target_rot = -PI / 2.0
 		target_y = 0.3
-	model.rotation.x = lerp_angle(model.rotation.x, target_rot, minf(1.0, delta * 6.0))
-	model.position.y = lerpf(model.position.y, target_y, minf(1.0, delta * 6.0))
+	if not _riding_open and emote_id == 0:
+		model.rotation.x = lerp_angle(model.rotation.x, target_rot, minf(1.0, delta * 6.0))
+		if crouch_blend < 0.05:
+			model.position.y = lerpf(model.position.y, target_y, minf(1.0, delta * 6.0))
 	var pil := piloting()
-	model.visible = not pil
+	# Open-cockpit vehicles keep the trooper visible (BARC / AT-RT / ISP). Tank hides rider.
+	_riding_open = pil and veh_vtype != 2
+	model.visible = (not pil) or _riding_open
 	if pil and mech_vis == null:
 		mech_vis = MechVisual.build_type(veh_vtype)
+		mech_vis.set_meta("vtype", veh_vtype)
 		add_child(mech_vis)
 		mech_cs = CollisionShape3D.new()
 		var bx := BoxShape3D.new()
@@ -810,11 +824,15 @@ func _update_pose(delta: float) -> void:
 		mech_cs.shape = bx
 		mech_cs.position.y = float(vst3["col_y"])
 		add_child(mech_cs)
-	elif pil and mech_vis != null and int(mech_vis.get_meta("vtype", veh_vtype)) != veh_vtype:
+	elif pil and mech_vis != null and int(mech_vis.get_meta("vtype", -1)) != veh_vtype:
 		mech_vis.queue_free()
 		mech_vis = MechVisual.build_type(veh_vtype)
 		mech_vis.set_meta("vtype", veh_vtype)
 		add_child(mech_vis)
+		var vst4: Dictionary = MechVisual.stats(veh_vtype)
+		if mech_cs != null and mech_cs.shape is BoxShape3D:
+			(mech_cs.shape as BoxShape3D).size = vst4["size"]
+			mech_cs.position.y = float(vst4["col_y"])
 	if mech_vis != null:
 		mech_vis.visible = pil
 		if mech_cs != null:
@@ -827,15 +845,37 @@ func _update_pose(delta: float) -> void:
 			var spd0: float = float(MechVisual.stats(veh_vtype)["speed"])
 			MechVisual.animate_type(mech_vis, veh_vtype, _mech_t, clampf(hv / maxf(spd0, 0.1), 0.0, 1.0), turn)
 			MechVisual.flash_type(mech_vis, veh_vtype, shot_t > 0.22)
+	# Seat / restore trooper transform (bone pose applied after AnimationPlayer via pose_cb)
+	if _riding_open:
+		_place_rider_seat()
+		if char_model != null:
+			char_model.set_visible_meshes(WEAPON_MESHES, [])
+			_shown_weapon = -2
+	elif _shown_weapon == -2:
+		# Just exited an open-cockpit vehicle — restore infantry pose/weapon
+		model.position = Vector3(0, target_y, 0)
+		model.rotation = Vector3(target_rot, 0, 0)
+		_shown_weapon = -1
+		var skx := _emote_skeleton()
+		if skx != null:
+			skx.reset_bone_poses()
+	# Crouch blend (visual)
+	var want_cb := 1.0 if (is_crouching and not pil) else 0.0
+	crouch_blend = lerpf(crouch_blend, want_cb, minf(1.0, delta * 12.0))
 	_update_anim(delta)
 	if emote_id > 0 and not is_local:
 		emote_t += delta
-		_animate_emote(delta)
 	elif not is_local and emote_id == 0 and emote_t != 0.0:
 		emote_t = 0.0
 		_reset_emote_bones()
+	var nametag_y := 2.3 - (0.55 * crouch_blend if not pil else 0.0)
+	if _riding_open:
+		nametag_y = model.position.y + 1.6
 	if name_label != null:
 		name_label.text = display_name + ("  [DOWNED - hold E]" if state == 1 else ("  [KIA]" if state == 2 else ""))
+		name_label.position.y = nametag_y
+	if rank_sprite != null:
+		rank_sprite.position.y = nametag_y
 
 
 
@@ -1137,6 +1177,8 @@ func net_update(pos: Vector3, ry: float, p: float, hp: float, st: int) -> void:
 	anim_flags = st >> 2
 	is_crouching = (anim_flags & 128) != 0
 	emote_id = (anim_flags >> 8) & 7
+	if (anim_flags & 64) != 0:
+		veh_vtype = (anim_flags >> 11) & 3
 
 
 
@@ -1206,7 +1248,7 @@ func _reset_emote_bones() -> void:
 	var sk := _emote_skeleton()
 	if sk != null:
 		sk.reset_bone_poses()
-	if model != null:
+	if model != null and not _riding_open:
 		model.position.y = 0.0
 		model.rotation = Vector3.ZERO
 
@@ -1268,6 +1310,98 @@ func _animate_emote(delta: float) -> void:
 	# Keep char_model from overwriting with locomotion while emoting
 	if char_model != null:
 		char_model.play("idle")
+
+
+
+func _place_rider_seat() -> void:
+	var seat := Vector3(0, 0.55, 0.35)
+	match veh_vtype:
+		0: seat = Vector3(0, 2.15, 0.25)  # AT-RT saddle
+		1: seat = Vector3(0, 0.55, 0.35)  # BARC
+		3: seat = Vector3(0, 0.65, 0.15)  # ISP
+		_: seat = Vector3(0, 0.55, 0.35)
+	var body: Node3D = mech_vis.get_node_or_null("Body") if mech_vis != null else null
+	if body != null:
+		model.position = body.position + seat
+		model.rotation = Vector3(body.rotation.x * 0.85 - 0.12, 0.0, body.rotation.z * 0.9)
+	else:
+		model.position = seat
+		model.rotation = Vector3(-0.12, 0, 0)
+
+
+## Called from char_model after AnimationPlayer.advance so bone overrides stick.
+func _apply_procedural_pose() -> void:
+	if state != 0:
+		return
+	if emote_id > 0:
+		_animate_emote(0.0)
+		return
+	if _riding_open:
+		_pose_rider()
+		return
+	if crouch_blend > 0.01 or slide_t > 0.0:
+		_pose_crouch()
+		return
+	# Clear residual hip pose position once standing again
+	var sk := _emote_skeleton()
+	if sk != null:
+		var hip_i := sk.find_bone("Hips")
+		if hip_i >= 0 and sk.get_bone_pose_position(hip_i).distance_to(sk.get_bone_rest(hip_i).origin) > 0.001:
+			sk.set_bone_pose_position(hip_i, sk.get_bone_rest(hip_i).origin)
+
+
+func _pose_rider() -> void:
+	var sk := _emote_skeleton()
+	if sk == null:
+		return
+	# Seated speeder / walker / ISP pose
+	_bone_rot(sk, "Hips", Vector3(-0.15, 0, 0))
+	_bone_rot(sk, "Abdomen", Vector3(0.2, 0, 0))
+	_bone_rot(sk, "Torso", Vector3(0.28, 0, 0))
+	_bone_rot(sk, "UpperLeg.L", Vector3(-1.15, 0.15, 0.35))
+	_bone_rot(sk, "UpperLeg.R", Vector3(-1.15, -0.15, -0.35))
+	_bone_rot(sk, "LowerLeg.L", Vector3(1.35, 0, 0))
+	_bone_rot(sk, "LowerLeg.R", Vector3(1.35, 0, 0))
+	_bone_rot(sk, "UpperArm.L", Vector3(-0.95, 0.2, -0.55))
+	_bone_rot(sk, "UpperArm.R", Vector3(-0.95, -0.2, 0.55))
+	_bone_rot(sk, "LowerArm.L", Vector3(-0.55, 0, 0))
+	_bone_rot(sk, "LowerArm.R", Vector3(-0.55, 0, 0))
+	if char_model != null:
+		char_model.play("idle", 0.0)
+
+
+func _pose_crouch() -> void:
+	var sk := _emote_skeleton()
+	if sk == null:
+		return
+	var b := crouch_blend
+	var sliding := slide_t > 0.0
+	var stride := 0.0
+	if _speed > 0.35 and not sliding:
+		stride = sin(Time.get_ticks_msec() * 0.012) * 0.35 * b
+	# Drop hips so head falls ~0.55–0.65m while feet stay near floor
+	var hip_i := sk.find_bone("Hips")
+	if hip_i >= 0:
+		var rest: Vector3 = sk.get_bone_rest(hip_i).origin
+		# Armature is scaled x100 — 0.0045 skel units ≈ 0.45 m world before char_model scale
+		sk.set_bone_pose_position(hip_i, rest + Vector3(0, -0.0048 * b, 0.0008 * b))
+	if sliding:
+		_bone_rot(sk, "Torso", Vector3(-0.35 * b, 0, 0))
+		_bone_rot(sk, "Abdomen", Vector3(-0.15 * b, 0, 0))
+		_bone_rot(sk, "UpperLeg.L", Vector3(-0.2 * b, 0, 0.1))
+		_bone_rot(sk, "UpperLeg.R", Vector3(-1.25 * b, 0, -0.1))
+		_bone_rot(sk, "LowerLeg.L", Vector3(0.3 * b, 0, 0))
+		_bone_rot(sk, "LowerLeg.R", Vector3(1.5 * b, 0, 0))
+	else:
+		_bone_rot(sk, "Torso", Vector3(0.25 * b, 0, 0))
+		_bone_rot(sk, "Abdomen", Vector3(0.12 * b, 0, 0))
+		_bone_rot(sk, "UpperLeg.L", Vector3((-1.05 + stride) * b, 0, 0.22 * b))
+		_bone_rot(sk, "UpperLeg.R", Vector3((-1.05 - stride) * b, 0, -0.22 * b))
+		_bone_rot(sk, "LowerLeg.L", Vector3((1.55 - stride * 0.4) * b, 0, 0))
+		_bone_rot(sk, "LowerLeg.R", Vector3((1.55 + stride * 0.4) * b, 0, 0))
+	# Keep locomotion anim from fighting hard — hold idle while crouched standing still
+	if char_model != null and _speed < 0.35 and not sliding:
+		char_model.play("idle", 0.0)
 
 
 func refresh_rank_sprite() -> void:
