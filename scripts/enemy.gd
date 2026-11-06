@@ -7,6 +7,7 @@ const TYPES := {
 	1: {"name": "B2 Super Droid", "hp": 240.0, "speed": 2.3, "range": 22.0, "dmg": 9.0, "rof": 0.55, "acc": 0.4, "credits": 25, "shield": 0.0},
 	3: {"name": "OOM Commander", "hp": 170.0, "speed": 2.8, "range": 30.0, "dmg": 7.0, "rof": 0.9, "acc": 0.45, "credits": 50, "shield": 0.0},
 	2: {"name": "Droideka", "hp": 130.0, "speed": 7.0, "range": 20.0, "dmg": 7.0, "rof": 0.35, "acc": 0.35, "credits": 40, "shield": 220.0},
+	4: {"name": "B2-HA Anti-Armor", "hp": 280.0, "speed": 2.6, "range": 42.0, "dmg": 75.0, "rof": 3.5, "acc": 0.85, "credits": 60, "shield": 0.0, "anti_armor": true},
 }
 
 var eid := 0
@@ -29,6 +30,9 @@ var repath := 0.0
 var los_cd := 0.0
 var los_cache := true
 var _think_acc := 0.0
+var react_t := -1.0          # reaction delay before first shot after acquiring LOS
+var cover_t := 0.0           # droideka: time target stayed behind cover
+var _grenade_fear := 0.0
 
 var model: Node3D
 var ball: MeshInstance3D
@@ -67,8 +71,10 @@ func _ready() -> void:
 	collision_mask = 1 | 4
 	var cs := CollisionShape3D.new()
 	var cap := CapsuleShape3D.new()
-	cap.radius = [0.4, 0.6, 0.7, 0.4][etype]
-	cap.height = [1.9, 2.2, 1.6, 2.0][etype]
+	var _rad := [0.4, 0.6, 0.7, 0.4, 0.65]
+	var _hgt := [1.9, 2.2, 1.6, 2.0, 2.3]
+	cap.radius = _rad[clampi(etype, 0, 4)]
+	cap.height = _hgt[clampi(etype, 0, 4)]
 	cs.shape = cap
 	cs.position.y = cap.height / 2.0
 	add_child(cs)
@@ -76,9 +82,11 @@ func _ready() -> void:
 	if etype != 2:
 		var hs := CollisionShape3D.new()
 		var sp := SphereShape3D.new()
-		sp.radius = [0.5, 0.62, 0, 0.52][etype]
+		var _hr := [0.5, 0.62, 0, 0.52, 0.6]
+		var _hy := [1.54, 1.78, 0, 1.62, 1.85]
+		sp.radius = _hr[clampi(etype, 0, 4)]
 		hs.shape = sp
-		hs.position.y = [1.54, 1.78, 0, 1.62][etype]
+		hs.position.y = _hy[clampi(etype, 0, 4)]
 		add_child(hs)
 	_build_model()
 	if multiplayer.is_server():
@@ -184,8 +192,27 @@ func _build_model() -> void:
 			shield_mesh.material_override = shield_mat
 			shield_mesh.position.y = 1.0
 			add_child(shield_mesh)
+		4:  # B2-HA Anti-Armor rocket droid
+			char_model = CharModel.new()
+			char_model.setup("res://models/robot.glb", 2.35, {"Main": Color(0.22, 0.18, 0.2), "Grey": Color(0.45, 0.1, 0.1)}, ROBOT_ANIMS)
+			char_model.scale *= Vector3(1.5, 1.05, 1.35)
+			model.add_child(char_model)
+			_box(Vector3(0.28, 0.28, 0.85), Vector3(0.7, 1.55, -0.15), Color(0.55, 0.18, 0.08))  # rocket tube
+			_box(Vector3(0.18, 0.18, 0.4), Vector3(0.7, 1.55, -0.7), Color(0.2, 0.2, 0.22))
+			_box(Vector3(0.12, 0.12, 0.12), Vector3(0.0, 1.9, -0.35), Color(1.0, 0.15, 0.1))  # optic
+			muzzle.position = Vector3(0.7, 1.55, -0.95)
 	model.add_child(muzzle)
-	if etype != 0:
+	if etype == 4:
+		hp_label = Label3D.new()
+		hp_label.text = "ANTI-ARMOR"
+		hp_label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+		hp_label.font_size = 42
+		hp_label.outline_size = 10
+		hp_label.pixel_size = 0.01
+		hp_label.modulate = Color(1.0, 0.35, 0.15)
+		hp_label.position.y = 2.7
+		add_child(hp_label)
+	elif etype != 0:
 		hp_label = Label3D.new()
 		if etype == 3:
 			hp_label.modulate = Color(1, 0.85, 0.3)
@@ -202,13 +229,23 @@ func muzzle_position() -> Vector3:
 	return muzzle.global_position
 
 
-## Server-side AI step.
+## Server-side AI step (difficulty-scaled brains + anti-armor hunter).
 func server_tick(delta: float, world) -> void:
+	var ai: int = int(world.DIFF.get("ai", 1))
 	retarget -= delta
-	if retarget <= 0.0 or target == null or not is_instance_valid(target) or target.state != 0:
+	if etype == 4:
+		# Strictly hunt piloted vehicles; else advance on highest vehicle-time player
+		var pil = world.nearest_piloted_player(global_position)
+		if pil != null:
+			target = pil
+		elif retarget <= 0.0 or target == null or not is_instance_valid(target) or target.state != 0:
+			target = world.highest_vehicle_time_player()
+			retarget = 0.8
+	elif retarget <= 0.0 or target == null or not is_instance_valid(target) or target.state != 0:
 		target = world.nearest_alive_player(global_position)
 		retarget = 1.0
 		buffed = etype != 3 and world.commander_near(global_position)
+		react_t = -1.0
 	if not is_on_floor():
 		velocity.y -= 14.0 * delta
 	else:
@@ -217,6 +254,19 @@ func server_tick(delta: float, world) -> void:
 		shield_cd -= delta
 	elif shield < max_shield:
 		shield = minf(max_shield, shield + 45.0 * delta)
+	# Dodge live grenades on Clone Commander
+	if ai >= 3 and world != null:
+		var gpos = world.nearest_live_grenade(global_position, 8.0)
+		if gpos != null:
+			var away: Vector3 = global_position - gpos
+			away.y = 0.0
+			if away.length() > 0.1:
+				away = away.normalized()
+				velocity.x = away.x * stats["speed"] * 1.4
+				velocity.z = away.z * stats["speed"] * 1.4
+				move_and_slide()
+				_update_visual(delta)
+				return
 	if target == null:
 		velocity.x = 0.0
 		velocity.z = 0.0
@@ -225,31 +275,73 @@ func server_tick(delta: float, world) -> void:
 	var to: Vector3 = target.global_position - global_position
 	to.y = 0.0
 	var dist := to.length()
+	var aim_h: Vector3 = target.aim_target_pos() if target.has_method("aim_target_pos") else target.global_position + Vector3(0, 1.2, 0)
 	var eye := global_position + Vector3(0, 1.5, 0)
-	# LOS raycast throttled to 5 Hz (staggered by id) instead of every physics tick
 	los_cd -= delta
 	if los_cd <= 0.0:
 		los_cd = 0.2 + (eid % 5) * 0.01
-		los_cache = world.has_los(eye, target.global_position + Vector3(0, 1.2, 0))
+		los_cache = world.has_los(eye, aim_h)
 	var los: bool = los_cache
-	var want_move: bool = dist > stats["range"] * (0.85 if etype == 3 else 0.7) or not los
+	if etype == 2:
+		if not los:
+			cover_t += delta
+		else:
+			cover_t = 0.0
+	# OOM keeps standoff on Veteran+
+	var range_mul := 0.7
+	if etype == 3:
+		range_mul = 0.85
+		if ai >= 2:
+			range_mul = 0.55  # prefer 18-26m
+	var want_move: bool = dist > stats["range"] * range_mul or not los
+	if etype == 3 and ai >= 2 and dist < 18.0:
+		want_move = true  # back off
+	if etype == 4:
+		# Hold fire / approach until someone is piloting
+		want_move = target == null or not target.piloting() or dist > stats["range"] * 0.75 or not los
 	var speed: float = stats["speed"]
 	if etype == 2:
 		deployed = not want_move
-	var dir := to.normalized() if dist > 0.01 else Vector3.ZERO
+		if ai >= 3 and cover_t > 3.0 and deployed:
+			deployed = false
+			want_move = true
+			cover_t = 0.0
+	var dir: Vector3 = to.normalized() if dist > 0.01 else Vector3.ZERO
+	# Flanking offset on Clone Commander
+	if ai >= 3 and want_move and dist > 12.0 and dist < 42.0 and etype != 4:
+		var ang: float = 0.56 if (eid % 2) == 0 else -0.56  # ±32°
+		dir = dir.rotated(Vector3.UP, ang)
 	if want_move:
-		dir = _nav_dir(delta, target.global_position, dir)
+		var goal: Vector3 = target.global_position
+		if etype == 3 and ai >= 2 and dist < 26.0:
+			goal = global_position - dir * 8.0  # retreat
+		dir = _nav_dir(delta, goal, dir)
 		velocity.x = dir.x * speed
 		velocity.z = dir.z * speed
-	elif etype == 0:
-		# B1s shuffle sideways while shooting
+		if etype == 1 and ai >= 2 and los:
+			# B2s advance while firing
+			pass
+	elif ai == 0:
+		# Cadet: stand still to shoot
+		velocity.x = 0.0
+		velocity.z = 0.0
+	elif ai == 1 or etype == 0:
 		strafe_t -= delta
 		if strafe_t <= 0.0:
 			strafe_t = randf_range(1.0, 2.5)
 			strafe_dir = -strafe_dir
 		var side := dir.cross(Vector3.UP) * strafe_dir
-		velocity.x = side.x * 1.5
-		velocity.z = side.z * 1.5
+		velocity.x = side.x * (1.5 if ai < 2 else 2.4)
+		velocity.z = side.z * (1.5 if ai < 2 else 2.4)
+	elif ai >= 2:
+		# Veteran+ juke strafe
+		strafe_t -= delta
+		if strafe_t <= 0.0:
+			strafe_t = randf_range(0.45, 1.1)
+			strafe_dir = -strafe_dir
+		var juke: Vector3 = dir.cross(Vector3.UP) * strafe_dir + dir * (0.3 if etype == 1 else 0.0)
+		velocity.x = juke.x * 2.8
+		velocity.z = juke.z * 2.8
 	else:
 		velocity.x = 0.0
 		velocity.z = 0.0
@@ -257,9 +349,20 @@ func server_tick(delta: float, world) -> void:
 		rotation.y = lerp_angle(rotation.y, atan2(-to.x, -to.z), minf(1.0, delta * 6.0))
 	move_and_slide()
 	fire_cd -= delta
-	if los and dist < stats["range"] and fire_cd <= 0.0 and (etype != 2 or deployed):
+	# Reaction window after first LOS
+	if los and react_t < 0.0:
+		react_t = float(world.DIFF.get("react", 0.3))
+	if react_t > 0.0:
+		react_t -= delta
+	var can_shoot: bool = los and dist < stats["range"] and fire_cd <= 0.0 and (etype != 2 or deployed) and react_t <= 0.0
+	if etype == 4:
+		can_shoot = can_shoot and target.piloting()
+	if can_shoot:
 		fire_cd = stats["rof"] * randf_range(0.8, 1.3) * (0.7 if buffed else 1.0)
-		world.enemy_fire(self, target, dist)
+		if etype == 4:
+			world.enemy_anti_armor_fire(self, target, dist)
+		else:
+			world.enemy_fire(self, target, dist)
 	_update_visual(delta)
 
 
@@ -340,10 +443,13 @@ func _update_visual(_delta: float) -> void:
 		shield_mesh.visible = deployed and shield > 0.0
 		shield_mat.albedo_color.a = 0.1 + 0.25 * (shield / max_shield)
 	if hp_label != null:
-		var t := "%d" % int(maxf(hp, 0.0))
-		if etype == 2 and deployed:
-			t += "  SH %d" % int(shield)
-		hp_label.text = t
+		if etype == 4:
+			hp_label.text = "ANTI-ARMOR  %d" % int(maxf(hp, 0.0))
+		else:
+			var t := "%d" % int(maxf(hp, 0.0))
+			if etype == 2 and deployed:
+				t += "  SH %d" % int(shield)
+			hp_label.text = t
 
 
 ## Play the death animation, drop collision, then free (used instead of an instant despawn).

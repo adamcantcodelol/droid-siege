@@ -94,7 +94,7 @@ func _ready() -> void:
 	ffa = int(Game.settings.get("mode", 0)) == 2
 	pvp_target = 10 if ffa else 15
 	LZ = M["lz"]
-	if Game.test_mode in ["smoke", "smoke2", "smokefail", "walkcap", "kbtest", "weapons", "hitbox", "camview", "horde", "mech"]:
+	if Game.test_mode in ["smoke", "smoke2", "smokefail", "walkcap", "kbtest", "weapons", "hitbox", "camview", "horde", "mech", "walls", "antitank", "classes"]:
 		test_speed = 4.0
 		Engine.time_scale = 3.0
 	players_root = _child_node("Players")
@@ -281,40 +281,79 @@ func _build_post(i: int) -> void:
 	post_visuals.append({"ring_mat": ring_mat, "flag": flag, "flag_mat": flag_mat, "label": lbl, "center": center})
 
 
-## ---- Driveable mechs (AT-RT walker) ----
+## ---- Driveable vehicles (AT-RT / BARC / TX-130 / ISP) ----
 var mechs: Array = []
 var mech_pilot: Array = []
+var mech_vtype: Array = []
+var mech_hp: Array = []
+var mech_max_hp: Array = []
+var mech_pad: Array = []       # Vector3 pad position
+var mech_pad_ry: Array = []
+var mech_wreck_t: Array = []   # >0 while wrecked, counting down to respawn
+const VEHICLE_RESPAWN := 40.0
+var vehicle_time_accum := {}   # peer_id -> cumulative piloted seconds (never resets on exit)
 
 
 func _spawn_mechs() -> void:
-	for spot in [LZ + Vector3(7, 0, -8)]:
-		var m := MechVisual.build()
-		var body := StaticBody3D.new()
-		body.name = "Col"
-		body.collision_layer = 1
-		var cs := CollisionShape3D.new()
-		var bx := BoxShape3D.new()
-		bx.size = Vector3(1.8, 3.6, 2.0)
-		cs.shape = bx
-		cs.position.y = 2.0
-		body.add_child(cs)
-		m.add_child(body)
-		add_child(m)
-		m.global_position = spot
-		m.rotation.y = PI
-		mechs.append(m)
-		mech_pilot.append(0)
+	# Balanced mix; Versus gets mirrored pads near both spawns
+	var pads: Array = [
+		{"pos": LZ + Vector3(8, 0, -10), "ry": PI, "v": 0},
+		{"pos": LZ + Vector3(-10, 0, -6), "ry": PI, "v": 1},
+		{"pos": Vector3(0, 0, 0) + Vector3(18, 0, -8), "ry": 0.0, "v": 3},
+	]
+	if versus:
+		pads.append({"pos": M["spawns"][0] + Vector3(10, 0, -8), "ry": PI, "v": 1})
+		pads.append({"pos": M["spawns"][1] + Vector3(-10, 0, 8), "ry": 0.0, "v": 1})
+		pads.append({"pos": Vector3(0, 0, 5), "ry": 0.0, "v": 2})  # one tank mid
+	else:
+		pads.append({"pos": POSTS[1] + Vector3(12, 0, 8), "ry": -PI / 2.0, "v": 2})
+	for pad in pads:
+		_add_vehicle(pad["v"], pad["pos"], pad["ry"])
+
+
+func _add_vehicle(vtype: int, pos: Vector3, ry: float) -> void:
+	var st: Dictionary = MechVisual.stats(vtype)
+	var m: Node3D = MechVisual.build_type(vtype)
+	m.set_meta("vtype", vtype)
+	var body := StaticBody3D.new()
+	body.name = "Col"
+	body.collision_layer = 1
+	var cs := CollisionShape3D.new()
+	var bx := BoxShape3D.new()
+	bx.size = st["size"]
+	cs.shape = bx
+	cs.position.y = float(st["col_y"])
+	body.add_child(cs)
+	m.add_child(body)
+	add_child(m)
+	m.global_position = pos
+	m.rotation.y = ry
+	mechs.append(m)
+	mech_pilot.append(0)
+	mech_vtype.append(vtype)
+	mech_hp.append(float(st["hp"]))
+	mech_max_hp.append(float(st["hp"]))
+	mech_pad.append(pos)
+	mech_pad_ry.append(ry)
+	mech_wreck_t.append(0.0)
 
 
 func mech_near(pos: Vector3) -> int:
 	for i in mechs.size():
-		if mech_pilot[i] == 0 and mechs[i].global_position.distance_to(pos) < 4.0:
+		if mech_pilot[i] == 0 and mech_wreck_t[i] <= 0.0 and mechs[i].visible \
+				and mechs[i].global_position.distance_to(pos) < 4.5:
 			return i
 	return -1
 
 
+func vehicle_name(i: int) -> String:
+	if i < 0 or i >= mech_vtype.size():
+		return "Vehicle"
+	return str(MechVisual.stats(mech_vtype[i])["name"])
+
+
 func on_mech_enter(i: int, pid: int) -> void:
-	if i < 0 or i >= mechs.size() or mech_pilot[i] != 0:
+	if i < 0 or i >= mechs.size() or mech_pilot[i] != 0 or mech_wreck_t[i] > 0.0:
 		return
 	mech_pilot[i] = pid
 	mechs[i].visible = false
@@ -322,10 +361,13 @@ func on_mech_enter(i: int, pid: int) -> void:
 	var p = players.get(pid)
 	if p != null:
 		p.in_mech = i
+		p.veh_vtype = mech_vtype[i]
 		if p.is_local:
 			p.global_position = mechs[i].global_position
 			p.rotation.y = mechs[i].rotation.y
-			show_message("Mech online. Mouse/arrows steer, fire = cannon, E = exit.")
+			p.veh_heat = 0.0
+			p.veh_shell_cd = 0.0
+			show_message("%s online. Steer + fire; E exits. Hull HP is separate from yours." % vehicle_name(i))
 
 
 func on_mech_exit(i: int, pos: Vector3, ry: float) -> void:
@@ -335,10 +377,212 @@ func on_mech_exit(i: int, pos: Vector3, ry: float) -> void:
 	if p != null:
 		p.in_mech = -1
 	mech_pilot[i] = 0
+	if mech_wreck_t[i] > 0.0:
+		return
 	mechs[i].global_position = pos
 	mechs[i].rotation.y = ry
 	mechs[i].visible = true
 	mechs[i].get_node("Col").collision_layer = 1
+
+
+## Apply damage to a vehicle hull. Returns true if destroyed.
+func damage_vehicle(i: int, dmg: float, attacker: int, from: Vector3) -> bool:
+	if i < 0 or i >= mechs.size() or mech_wreck_t[i] > 0.0:
+		return false
+	mech_hp[i] = maxf(0.0, mech_hp[i] - dmg)
+	if mech_hp[i] > 0.0:
+		return false
+	_destroy_vehicle(i, attacker, from)
+	return true
+
+
+func _destroy_vehicle(i: int, attacker: int, from: Vector3) -> void:
+	var pid: int = mech_pilot[i]
+	spawn_explosion(mechs[i].global_position + Vector3(0, 1.0, 0))
+	Game.net_all("explosion_fx", [mechs[i].global_position + Vector3(0, 1.0, 0)], false)
+	mech_wreck_t[i] = VEHICLE_RESPAWN
+	mechs[i].visible = false
+	mechs[i].get_node("Col").collision_layer = 0
+	if pid != 0:
+		var p = players.get(pid)
+		if p != null:
+			p.in_mech = -1
+			if p.is_local:
+				# Bailout blast — fair chip damage to the pilot
+				p.take_damage(28.0, from if from != Vector3.ZERO else mechs[i].global_position, attacker)
+			elif multiplayer.is_server():
+				last_attacker[pid] = attacker
+				Game.net_peer(pid, "hit_player", [28.0, from if from != Vector3.ZERO else mechs[i].global_position, attacker])
+		mech_pilot[i] = 0
+	show_message("%s destroyed!" % vehicle_name(i))
+
+
+func _tick_vehicles(delta: float) -> void:
+	for i in mechs.size():
+		if mech_wreck_t[i] <= 0.0:
+			continue
+		mech_wreck_t[i] -= delta
+		if mech_wreck_t[i] <= 0.0:
+			mech_wreck_t[i] = 0.0
+			mech_hp[i] = mech_max_hp[i]
+			mechs[i].global_position = mech_pad[i]
+			mechs[i].rotation.y = mech_pad_ry[i]
+			mechs[i].visible = true
+			mechs[i].get_node("Col").collision_layer = 1
+			mech_pilot[i] = 0
+	# Cumulative vehicle timer → Anti-Armor spawn (co-op / horde only, server)
+	if multiplayer.is_server() and not versus and not ended and started:
+		_tick_anti_armor_timer(delta)
+	# Lava burn hazard (Mustafar)
+	if multiplayer.is_server() and M.get("layout", "") == "mustafar":
+		_tick_lava(delta)
+
+
+func _tick_anti_armor_timer(delta: float) -> void:
+	for p in players.values():
+		if p.state != 0:
+			continue
+		if p.piloting():
+			var pid: int = p.peer_id
+			vehicle_time_accum[pid] = float(vehicle_time_accum.get(pid, 0.0)) + delta
+			while float(vehicle_time_accum[pid]) >= 30.0:
+				vehicle_time_accum[pid] = float(vehicle_time_accum[pid]) - 30.0
+				_spawn_anti_armor()
+
+
+func _spawn_anti_armor() -> void:
+	var spot: Vector3 = droid_spawns[rng.randi() % droid_spawns.size()] if droid_spawns.size() > 0 else LZ + Vector3(20, 0, -30)
+	spot.y = 0.5
+	var id := next_enemy_id
+	next_enemy_id += 1
+	var e = _create_enemy(id, 4, spot)
+	if e != null:
+		Game.net_all("feed", ["Anti-Armor Rocket Droid deployed — hunting vehicles!"])
+		show_message("Anti-Armor Rocket Droid deployed — hunting vehicles!")
+
+
+func nearest_piloted_player(pos: Vector3):
+	var best = null
+	var bd := INF
+	for p in players.values():
+		if p.state != 0 or not p.piloting():
+			continue
+		var d: float = p.global_position.distance_squared_to(pos)
+		if d < bd:
+			bd = d
+			best = p
+	return best
+
+
+func highest_vehicle_time_player():
+	var best = null
+	var bt := -1.0
+	for p in players.values():
+		if p.state != 0:
+			continue
+		var tsec: float = float(vehicle_time_accum.get(p.peer_id, 0.0))
+		if tsec > bt:
+			bt = tsec
+			best = p
+	return best if best != null else nearest_alive_player(LZ)
+
+
+func enemy_anti_armor_fire(e, target, dist: float) -> void:
+	if target == null or not target.piloting():
+		return
+	var from: Vector3 = e.muzzle_position()
+	var aim: Vector3 = target.global_position + Vector3(0, 1.5, 0)
+	var lead: float = float(DIFF.get("lead", 0.0))
+	if lead > 0.0:
+		aim += target.velocity * (dist / 70.0) * lead
+	var to := aim
+	var q := PhysicsRayQueryParameters3D.create(from, to, 1)
+	var res := get_world_3d().direct_space_state.intersect_ray(q)
+	var blocked := false
+	if not res.is_empty() and from.distance_to(res["position"]) + 0.1 < from.distance_to(aim):
+		to = res["position"]
+		blocked = true
+	Game.net_all("bolt_fx", [from, to, 3])  # heavy orange/green-ish bolt kind 3
+	if blocked:
+		return
+	var chance: float = float(e.stats["acc"])
+	if rng.randf() > chance:
+		return
+	# Direct vehicle hull damage
+	if target.in_mech >= 0:
+		damage_vehicle(target.in_mech, float(e.stats["dmg"]), 0, from)
+	else:
+		Game.net_peer(target.peer_id, "hit_player", [float(e.stats["dmg"]) * 0.35, from, 0])
+
+
+func nearest_live_grenade(pos: Vector3, radius: float):
+	# grenades live under fx_root briefly; scan children with velocity meta
+	if fx_root == null:
+		return null
+	for c in fx_root.get_children():
+		if c.has_method("get") and c.get("velocity") != null:
+			if c.global_position.distance_to(pos) < radius:
+				return c.global_position
+	return null
+
+
+func officer_aura_mult(pid: int) -> float:
+	var p = players.get(pid)
+	if p == null:
+		return 1.0
+	var best := 1.0
+	for o in players.values():
+		if o.state != 0 or o.cls != 3:
+			continue
+		var d: float = o.global_position.distance_to(p.global_position)
+		if d <= 12.0:
+			var self_half: bool = (o.peer_id == pid)
+			best = maxf(best, 1.15 if not self_half else 1.075)
+	return best
+
+
+func officer_regen(pid: int) -> float:
+	var p = players.get(pid)
+	if p == null:
+		return 0.0
+	var r := 0.0
+	for o in players.values():
+		if o.state != 0 or o.cls != 3:
+			continue
+		var d: float = o.global_position.distance_to(p.global_position)
+		if d <= 12.0:
+			r = maxf(r, 3.0 if o.peer_id != pid else 1.5)
+	return r
+
+
+func apply_battle_command(src_pid: int, pos: Vector3) -> void:
+	for p in players.values():
+		if p.state != 0:
+			continue
+		if p.global_position.distance_to(pos) <= 14.0:
+			if p.is_local:
+				p.bonus_hp = maxf(p.bonus_hp, 25.0)
+				p.cmd_buff_t = maxf(p.cmd_buff_t, 6.0)
+			elif multiplayer.is_server() and p.peer_id != src_pid:
+				Game.net_peer(p.peer_id, "battle_cmd_fx", [])
+
+
+func _tick_lava(delta: float) -> void:
+	# Burn anyone standing near lava channel centers (y near 0, in channel xz)
+	for p in players.values():
+		if p.state != 0:
+			continue
+		var pos: Vector3 = p.global_position
+		# Channels from maps: wide X or Z bands at low y
+		var in_lava: bool = absf(pos.z - 5.0) < 5.5 and absf(pos.x) < 60.0
+		in_lava = in_lava or (absf(pos.x + 30.0) < 5.5 and absf(pos.z + 10.0) < 40.0)
+		in_lava = in_lava or (absf(pos.x - 35.0) < 5.5 and absf(pos.z - 30.0) < 35.0)
+		# Safe on elevated platforms (y > 0.3)
+		if in_lava and pos.y < 0.35 and not p.piloting():
+			if p.is_local:
+				p.take_damage(12.0 * delta, pos, 0)
+			else:
+				Game.net_peer(p.peer_id, "hit_player", [12.0 * delta, pos, 0])
 
 
 func _build_gunship() -> Node3D:
@@ -516,6 +760,7 @@ func _check_start() -> void:
 
 
 func _physics_process(delta: float) -> void:
+	_tick_vehicles(delta)
 	if multiplayer.is_server():
 		if not started:
 			start_wait += delta
@@ -755,23 +1000,37 @@ func _create_enemy(id: int, etype: int, pos: Vector3):
 
 func enemy_fire(e, target, dist: float) -> void:
 	var from: Vector3 = e.muzzle_position()
-	var aim: Vector3 = target.global_position + Vector3(0, 1.2, 0)
+	var aim: Vector3 = target.aim_target_pos() if target.has_method("aim_target_pos") else target.global_position + Vector3(0, 1.2, 0)
+	# Predictive lead on Veteran / Clone Commander
+	var lead: float = float(DIFF.get("lead", 0.0))
+	if lead > 0.0 and "velocity" in target:
+		aim += target.velocity * (dist / 90.0) * lead
 	var chance: float = e.stats["acc"] * clampf(1.3 - dist / e.stats["range"], 0.35, 1.0)
 	if target.is_sprinting:
 		chance *= 0.6
+	if target.get("is_crouching"):
+		chance *= 0.75
 	var hit := rng.randf() < chance
 	var to := aim
 	if not hit:
 		var off := Vector3(rng.randf_range(-1.6, 1.6), rng.randf_range(-0.6, 1.4), rng.randf_range(-1.6, 1.6))
 		to = from + ((aim + off) - from).normalized() * (dist + 20.0)
-		var q := PhysicsRayQueryParameters3D.create(from, to, 1)
-		var res := get_world_3d().direct_space_state.intersect_ray(q)
-		if not res.is_empty():
-			to = res["position"]
+	# ALWAYS wall-check from muzzle — cover blocks hits even when LOS cache is stale
+	var q := PhysicsRayQueryParameters3D.create(from, to, 1)
+	var res := get_world_3d().direct_space_state.intersect_ray(q)
+	if not res.is_empty():
+		var wall_pos: Vector3 = res["position"]
+		if from.distance_to(wall_pos) + 0.05 < from.distance_to(aim):
+			to = wall_pos
+			hit = false
 	Game.net_all("bolt_fx", [from, to, 1])
 	if hit:
 		var solo := 0.8 if players.size() == 1 else 1.0
-		Game.net_peer(target.peer_id, "hit_player", [float(e.stats["dmg"]) * solo * (1.25 if e.buffed else 1.0), from])
+		Game.net_peer(target.peer_id, "hit_player", [float(e.stats["dmg"]) * solo * (1.25 if e.buffed else 1.0), from, 0])
+
+
+func micro_splash(pos: Vector3, shooter: int, dmg: float, radius: float) -> void:
+	explode(pos, shooter, radius, dmg, dmg * 1.2)
 
 
 func damage_enemy(eid: int, dmg: float, from: Vector3, shooter: int, explosive: bool) -> void:
@@ -784,17 +1043,25 @@ func damage_enemy(eid: int, dmg: float, from: Vector3, shooter: int, explosive: 
 		Game.net_all("enemy_died", [eid, e.global_position, shooter, e.etype])
 
 
-func explode(pos: Vector3, shooter: int) -> void:
+func explode(pos: Vector3, shooter: int, radius: float = 7.0, pvp_base: float = 120.0, enemy_base: float = 160.0) -> void:
 	Game.net_all("explosion_fx", [pos])
+	var origin := pos + Vector3(0, 0.4, 0)
+	var space := get_world_3d().direct_space_state
 	if versus:
 		for p in players.values():
 			var dp: float = p.global_position.distance_to(pos)
-			if dp < 7.0:
-				pvp_damage(shooter, p.peer_id, 120.0 * (1.0 - dp / 7.0) + 20.0, pos)
+			if dp < radius:
+				var tc: Vector3 = p.aim_target_pos() if p.has_method("aim_target_pos") else p.global_position + Vector3(0, 1.0, 0)
+				var rq := PhysicsRayQueryParameters3D.create(origin, tc, 1)
+				if space.intersect_ray(rq).is_empty():
+					pvp_damage(shooter, p.peer_id, pvp_base * (1.0 - dp / radius) + 20.0, pos)
 	for e in enemies.values().duplicate():
 		var d: float = e.global_position.distance_to(pos)
-		if d < 7.0:
-			damage_enemy(e.eid, 160.0 * (1.0 - d / 7.0) + 40.0, pos, shooter, true)
+		if d < radius:
+			var ec: Vector3 = e.global_position + Vector3(0, 1.0, 0)
+			var rq2 := PhysicsRayQueryParameters3D.create(origin, ec, 1)
+			if space.intersect_ray(rq2).is_empty():
+				damage_enemy(e.eid, enemy_base * (1.0 - d / radius) + 40.0, pos, shooter, true)
 
 
 # ------------------------------------------------------------------ versus (host-authoritative)
@@ -815,13 +1082,19 @@ func pvp_damage(shooter: int, target: int, dmg: float, from: Vector3) -> void:
 	if t == null or t.state != 0:
 		return
 	last_attacker[target] = shooter
-	Game.net_peer(target, "hit_player", [dmg, from])
+	# Piloted vehicles absorb hits on their own hull HP
+	if t.in_mech >= 0:
+		damage_vehicle(t.in_mech, dmg, shooter, from)
+		return
+	Game.net_peer(target, "hit_player", [dmg, from, shooter])
 
 
-func on_pvp_died(victim: int) -> void:
+func on_pvp_died(victim: int, reported_killer: int = 0) -> void:
 	if ended:
 		return
-	var killer: int = last_attacker.get(victim, 0)
+	var killer: int = reported_killer if reported_killer != 0 and reported_killer != victim else last_attacker.get(victim, 0)
+	if reported_killer != 0 and reported_killer != victim and is_hostile(reported_killer, victim):
+		killer = reported_killer
 	last_attacker.erase(victim)
 	var vs: Vector2i = pvp_scores.get(victim, Vector2i.ZERO)
 	pvp_scores[victim] = Vector2i(vs.x, vs.y + 1)
@@ -937,7 +1210,7 @@ func on_enemy_died(eid: int, pos: Vector3, killer: int = 0, etype: int = 0) -> v
 
 
 func _spawn_debris(pos: Vector3, etype: int) -> void:
-	var col: Color = [Color(0.78, 0.68, 0.48), Color(0.3, 0.33, 0.4), Color(0.55, 0.4, 0.25), Color(0.92, 0.75, 0.2)][clampi(etype, 0, 3)]
+	var col: Color = [Color(0.78, 0.68, 0.48), Color(0.3, 0.33, 0.4), Color(0.55, 0.4, 0.25), Color(0.92, 0.75, 0.2), Color(0.45, 0.1, 0.1)][clampi(etype, 0, 4)]
 	for i in 7:
 		var mi := MeshInstance3D.new()
 		var bm := BoxMesh.new()
@@ -997,12 +1270,24 @@ func on_mission_end(win: bool, credits: int, k: int) -> void:
 
 
 # ------------------------------------------------------------------ fx
+var _bolt_pool: Array = []
+
+
 func spawn_bolt(from: Vector3, to: Vector3, kind: int) -> void:
-	var b := BoltScript.new()
-	b.from = from
-	b.to = to
-	b.kind = kind
-	fx_root.add_child(b)
+	var b = null
+	for cand in _bolt_pool:
+		if is_instance_valid(cand) and not cand.visible and not cand._alive:
+			b = cand
+			break
+	if b == null:
+		b = BoltScript.new()
+		fx_root.add_child(b)
+		_bolt_pool.append(b)
+		if _bolt_pool.size() > 64:
+			var old = _bolt_pool.pop_front()
+			if is_instance_valid(old):
+				old.queue_free()
+	b.reset_bolt(from, to, kind)
 	_muzzle_flash(from, kind)
 	Game.play_sfx(["blaster", "enemy_blaster", "scatter"][clampi(kind, 0, 2)], from, -8.0 if kind == 1 else -4.0)
 	# drive the shooter's firing animation (works for remote players and synced droids alike)
@@ -1117,8 +1402,10 @@ func _update_visuals(delta: float) -> void:
 func _test_autopilot(delta: float) -> void:
 	if Game.test_mode == "pvp_server":
 		_test_pvp_server(delta)
+	if Game.test_mode == "pvp_bidir_server":
+		_test_pvp_bidir_server(delta)
 		return
-	if Game.test_mode not in ["smoke", "smoke2", "smokefail", "walkcap", "kbtest", "weapons", "hitbox", "camview", "horde", "mech"]:
+	if Game.test_mode not in ["smoke", "smoke2", "smokefail", "walkcap", "kbtest", "weapons", "hitbox", "camview", "horde", "mech", "walls", "antitank", "classes"]:
 		return
 	test_elapsed += delta
 	var lp = local_player()
@@ -1130,8 +1417,18 @@ func _test_autopilot(delta: float) -> void:
 	if Game.test_mode == "camview":
 		_test_camview(lp)
 		return
-	if Game.test_mode == "mech":
+	if Game.test_mode == "mech" and _t_stage == 0:
+		_t_stage = 1
 		_test_mech(lp)
+	if Game.test_mode == "walls" and _t_stage == 0:
+		_t_stage = 1
+		_test_walls(lp)
+	if Game.test_mode == "antitank" and _t_stage == 0:
+		_t_stage = 1
+		_test_antitank(lp)
+	if Game.test_mode == "classes" and _t_stage == 0:
+		_t_stage = 1
+		_test_classes(lp)
 		return
 	if Game.test_mode == "hitbox":
 		_test_hitbox(lp)
@@ -1281,6 +1578,9 @@ func _test_pvp_server(delta: float) -> void:
 
 
 func _process(_delta: float) -> void:
+	if Game.test_mode == "pvp_bidir_client":
+		_test_pvp_bidir_client(_delta)
+		return
 	if Game.test_mode != "pvp_client":
 		return
 	var lp = local_player()
@@ -1371,7 +1671,7 @@ func _test_weapons(_delta: float, lp) -> void:
 		1:
 			Input.action_release("weapon2")
 			if test_elapsed - _t_mark > 0.6:
-				if lp.weapon != 1 or lp.mag != lp.SHOTGUN_MAG:
+				if lp.weapon != 1 or lp.mag != Game.mag_size(1):
 					Game.finish_test(false, "WEAPONS switch weapon=%d mag=%d" % [lp.weapon, lp.mag])
 					return
 				_t_val = _t_enemy.hp
@@ -1449,8 +1749,9 @@ func apply_quality(q: int) -> void:
 		rain.amount = [150, 300, 600][q]
 	if builder != null:
 		for n in builder.deco.get_children():
-			if n is MultiMeshInstance3D and n.name.begins_with("MM_small"):
-				n.visibility_range_end = [45.0, 70.0, 0.0][q]
+			if n is MultiMeshInstance3D:
+				n.visibility_range_end = [115.0, 180.0, 0.0][q]
+				n.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_DISABLED
 	for e in enemies.values():
 		if e.char_model != null:
 			e.char_model.set_shadows(q > 0)
@@ -1538,53 +1839,54 @@ func _test_hitbox(lp) -> void:
 ## Local trooper must be in front of the camera and on screen: at the LZ, backed against the
 ## ALPHA flag pole and backed against a mesa wall (the cases that used to put the camera in the helmet).
 func _test_mech(lp) -> void:
-	if _t_stage > 0:
-		return
-	_t_stage = 1
-	lp.god = true
 	spawn_cd = 9999.0
-	lp.global_position = mechs[0].global_position + Vector3(2.5, 0.05, 0)
-	for k in 4:
+	lp.god = true
+	var ok := true
+	var msgs := []
+	# Enter / drive / fire / exit each vehicle type present
+	for i in mechs.size():
+		if mech_wreck_t[i] > 0.0:
+			continue
+		lp.global_position = mechs[i].global_position + Vector3(2.5, 0.05, 0)
 		await get_tree().physics_frame
-	var near := mech_near(lp.global_position) == 0
-	Input.action_press("interact")
-	await get_tree().physics_frame
-	await get_tree().physics_frame
-	Input.action_release("interact")
-	var entered: bool = lp.in_mech == 0 and not mechs[0].visible
-	var p0: Vector3 = lp.global_position
-	Input.action_press("move_forward")
-	for k in 60:
+		on_mech_enter(i, lp.peer_id)
 		await get_tree().physics_frame
-	Input.action_release("move_forward")
-	var moved: float = Vector2(lp.global_position.x - p0.x, lp.global_position.z - p0.z).length()
-	var r0: float = lp.rotation.y
-	var cm: int = Game.control_mode
-	Game.control_mode = 1   # keyboard-only steering (arrows / J L)
-	Input.action_press("turn_right")
-	for k in 20:
+		if lp.in_mech != i:
+			ok = false
+			msgs.append("enter fail v=%d" % mech_vtype[i])
+			continue
+		var hull0: float = mech_hp[i]
+		var trooper0: float = lp.health
+		damage_vehicle(i, 40.0, 0, lp.global_position)
+		if absf(mech_hp[i] - (hull0 - 40.0)) > 0.1 or absf(lp.health - trooper0) > 0.1:
+			ok = false
+			msgs.append("hull dmg fail v=%d hp=%s trooper=%s" % [mech_vtype[i], mech_hp[i], lp.health])
+		lp._shoot_mech()
 		await get_tree().physics_frame
-	Input.action_release("turn_right")
-	Game.control_mode = cm
-	var turned := absf(angle_difference(r0, lp.rotation.y)) > 0.05
-	lp.fire_cd = 0.0
-	Input.action_press("kb_fire")
-	await get_tree().physics_frame
-	await get_tree().physics_frame
-	Input.action_release("kb_fire")
-	var fired: bool = lp.fire_cd > 0.0
-	var camd: float = lp.cam.global_position.distance_to(lp.global_position)
-	# crosshair ray must not hit the walker: camera above the cockpit roof (3.8 m)
-	var clear: bool = lp.cam.global_position.y - lp.global_position.y > 4.5
-	await get_tree().physics_frame
-	Input.action_press("interact")
-	await get_tree().physics_frame
-	await get_tree().physics_frame
-	Input.action_release("interact")
-	await get_tree().physics_frame
-	var exited: bool = lp.in_mech == -1 and mechs[0].visible and mechs[0].global_position.distance_to(p0) > 2.0
-	print("[test] mech near=%s entered=%s moved=%.1fm turned=%s fired=%s chase_cam=%.1fm cam_above_roof=%s exited=%s" % [near, entered, moved, turned, fired, camd, clear, exited])
-	Game.finish_test(near and entered and moved > 2.0 and turned and fired and camd > 7.0 and clear and exited, "MECH enter/drive/fire/exit")
+		lp.exit_mech()
+		await get_tree().physics_frame
+		if lp.in_mech != -1:
+			ok = false
+			msgs.append("exit fail v=%d" % mech_vtype[i])
+	# Destroy vehicle: hull to 0 ejects pilot, trooper takes bailout dmg
+	if mechs.size() > 0:
+		lp.health = lp.max_health
+		lp.god = false
+		on_mech_enter(0, lp.peer_id)
+		await get_tree().physics_frame
+		var before: float = lp.health
+		damage_vehicle(0, 9999.0, 0, lp.global_position)
+		await get_tree().physics_frame
+		if lp.in_mech != -1 or mech_wreck_t[0] <= 0.0:
+			ok = false
+			msgs.append("destroy/eject fail")
+		if lp.health >= before:
+			ok = false
+			msgs.append("bailout dmg missing hp=%s" % lp.health)
+		lp.god = true
+	print("[test] mech: vehicles=%d types=%s msgs=%s" % [mechs.size(), mech_vtype, msgs])
+	Game.finish_test(ok and mechs.size() >= 2, "MECH multi-vehicle hull HP + enter/fire/exit")
+
 
 
 func _test_camview(lp) -> void:
@@ -1638,3 +1940,171 @@ func _test_camview(lp) -> void:
 	fp_ok = fp_ok and not lp.first_person and (lp.cam.cull_mask & 2) != 0
 	Game.save["fp"] = false
 	Game.finish_test(ok and held and fp_ok, "CAMVIEW local trooper visible in third person + ADS without recoil")
+
+
+
+func _test_walls(lp) -> void:
+	spawn_cd = 9999.0
+	lp.god = true
+	for e in enemies.values().duplicate():
+		damage_enemy(e.eid, 9999.0, Vector3.ZERO, 1, false)
+	# Wall between shooter and a fresh B1
+	var wall_pos := LZ + Vector3(0, 1.5, -15)
+	builder.box(wall_pos, Vector3(8, 3, 1), Color(0.5, 0.5, 0.5), Vector3.ZERO, true, true)
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+	lp.global_position = LZ + Vector3(0, 0.5, -8)
+	lp.rotation.y = PI
+	var e = _create_enemy(next_enemy_id, 0, LZ + Vector3(0, 0.5, -22))
+	next_enemy_id += 1
+	var hp0: float = e.hp
+	# Force a barrel-traced shot toward the enemy (camera elevated)
+	lp.pitch = -0.15
+	lp.pivot.rotation.x = lp.pitch
+	for i in 5:
+		lp._shoot()
+		await get_tree().physics_frame
+	var blocked_ok: bool = e.hp >= hp0 - 0.1
+	# Enemy fire through wall should also be blocked
+	var thp0: float = lp.health
+	lp.god = false
+	enemy_fire(e, lp, lp.global_position.distance_to(e.global_position))
+	await get_tree().physics_frame
+	var enemy_blocked: bool = lp.health >= thp0 - 0.1
+	lp.god = true
+	print("[test] walls: player_blocked=%s enemy_blocked=%s ehp %.0f->%.0f" % [blocked_ok, enemy_blocked, hp0, e.hp])
+	Game.finish_test(blocked_ok and enemy_blocked, "WALLS stop bullets both ways")
+
+
+func _test_antitank(lp) -> void:
+	spawn_cd = 9999.0
+	lp.god = true
+	vehicle_time_accum[lp.peer_id] = 0.0
+	# Hop in for 20s worth, hop out, hop in for 10s → spawn
+	if mechs.is_empty():
+		Game.finish_test(false, "ANTITANK no vehicles")
+		return
+	on_mech_enter(0, lp.peer_id)
+	vehicle_time_accum[lp.peer_id] = 20.0
+	_tick_anti_armor_timer(0.0)
+	var mid := enemies.values().filter(func(e): return e.etype == 4)
+	if mid.size() != 0:
+		Game.finish_test(false, "ANTITANK spawned too early at 20s")
+		return
+	lp.exit_mech()
+	await get_tree().physics_frame
+	# Accum must NOT reset
+	if float(vehicle_time_accum.get(lp.peer_id, 0.0)) < 19.0:
+		Game.finish_test(false, "ANTITANK accum reset on exit")
+		return
+	on_mech_enter(0, lp.peer_id)
+	vehicle_time_accum[lp.peer_id] = 30.0
+	_tick_anti_armor_timer(0.0)
+	var aa := []
+	for e in enemies.values():
+		if e.etype == 4:
+			aa.append(e)
+	var spawned: bool = aa.size() >= 1
+	var hunts := false
+	if spawned:
+		aa[0].server_tick(0.05, self)
+		hunts = aa[0].target == lp or (aa[0].target != null and aa[0].target.piloting())
+	print("[test] antitank: spawned=%d hunts_pilot=%s accum=%.1f" % [aa.size(), hunts, vehicle_time_accum.get(lp.peer_id, 0.0)])
+	Game.finish_test(spawned and hunts, "ANTITANK cumulative 30s spawn + vehicle hunt")
+
+
+func _test_classes(lp) -> void:
+	spawn_cd = 9999.0
+	lp.god = true
+	var ok := true
+	for c in range(4):
+		lp.apply_class(c)
+		for slot in range(2):
+			lp.switch_weapon(slot)
+			lp.mag = maxi(lp.mag, 1)
+			lp.fire_cd = 0.0
+			lp._shoot()
+			await get_tree().physics_frame
+		if lp.max_health < 80.0:
+			ok = false
+	lp.is_crouching = false
+	lp.crouch_toggle = true
+	lp._update_crouch(0.5, true)
+	var crouched: bool = lp.is_crouching and lp.crouch_eye_y < 1.3
+	var maps_ok: bool = Game.MAPS.size() >= 6
+	# Dynamic controls strip
+	hud._hud_cache.erase("ctrl")
+	hud._update_controls_hint(lp)
+	var hint: String = str(hud.controls_hint.text) if hud.controls_hint else ""
+	var hint_ok: bool = hud.controls_hint != null and ("Crouch" in hint or "Stand" in hint)
+	lp.apply_class(3)
+	lp.cmd_cd = 0.0
+	hud._hud_cache.erase("ctrl")
+	hud._update_controls_hint(lp)
+	var officer_ready: bool = "Battle Cmd READY" in str(hud.controls_hint.text)
+	lp.cmd_cd = 12.0
+	hud._hud_cache.erase("ctrl")
+	hud._update_controls_hint(lp)
+	var officer_cd: bool = "Cmd 12s" in str(hud.controls_hint.text)
+	var veh_hint: bool = true
+	if mechs.size() > 0:
+		on_mech_enter(0, lp.peer_id)
+		hud._hud_cache.erase("ctrl")
+		hud._update_controls_hint(lp)
+		veh_hint = "[E] Exit" in str(hud.controls_hint.text) and "[LMB] Fire" in str(hud.controls_hint.text)
+		lp.exit_mech()
+	print("[test] classes: ok=%s crouched=%s maps=%d hint=%s officer=%s/%s veh=%s" % [ok, crouched, Game.MAPS.size(), hint, officer_ready, officer_cd, veh_hint])
+	Game.finish_test(ok and crouched and maps_ok and hint_ok and officer_ready and officer_cd and veh_hint, "CLASSES 4x2 weapons + crouch + 6 maps + controls HUD")
+
+
+
+## Bidirectional PvP: verify Client→Host AND Host→Client kill credit (catches nested RPC sender bug).
+func _test_pvp_bidir_server(delta: float) -> void:
+	test_elapsed += delta
+	test_cd -= delta
+	if not players.has(1):
+		return
+	var client_id := 0
+	for pid in players.keys():
+		if pid != 1:
+			client_id = pid
+			break
+	if client_id == 0:
+		return
+	match _t_stage:
+		0:
+			# Host kills client once via authoritative path
+			if players[client_id].state == 0 and test_cd <= 0.0:
+				pvp_damage(1, client_id, 9999.0, players[1].global_position)
+				test_cd = 0.4
+			if pvp_scores.get(1, Vector2i.ZERO).x >= 1 and players[client_id].state == 0 and test_elapsed > 6.0:
+				_t_stage = 1
+				test_cd = 0.5
+				print("[test] bidir: host scored, now client will kill host")
+		1:
+			# Simulate the nested-RPC bug path: client requests damage on host, which sync-calls hit/pvp_died
+			if players[1].state == 0 and test_cd <= 0.0:
+				# Mimic what happens when client's req_pvp_damage arrives (sender = client)
+				# Directly exercise pvp_damage + hit_player + pvp_died chain with nested local calls
+				pvp_damage(client_id, 1, 9999.0, players[client_id].global_position)
+				test_cd = 0.4
+			var ck: int = pvp_scores.get(client_id, Vector2i.ZERO).x
+			var hk: int = pvp_scores.get(1, Vector2i.ZERO).x
+			var cdth: int = pvp_scores.get(client_id, Vector2i.ZERO).y
+			var hdth: int = pvp_scores.get(1, Vector2i.ZERO).y
+			if ck >= 1 and hk >= 1 and cdth >= 1 and hdth >= 1:
+				print("[test] bidir scores host=%s client=%s" % [pvp_scores.get(1), pvp_scores.get(client_id)])
+				Game.finish_test(true, "PVP BIDIR host_kills=%d client_kills=%d distributed" % [hk, ck])
+			elif test_elapsed > 25.0:
+				print("[test] bidir FAIL host=%s client=%s" % [pvp_scores.get(1), pvp_scores.get(client_id)])
+				Game.finish_test(false, "PVP BIDIR attribution host=%s client=%s" % [pvp_scores.get(1), pvp_scores.get(client_id)])
+
+
+func _test_pvp_bidir_client(delta: float) -> void:
+	test_elapsed += delta
+	var lp = local_player()
+	if lp == null:
+		return
+	# Stay alive / respawn; server drives attribution checks
+	if test_elapsed > 40.0 and not Game._test_done:
+		Game.finish_test(false, "PVP BIDIR CLIENT timeout")

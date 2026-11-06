@@ -1,4 +1,5 @@
 extends Control
+const TrooperClass = preload("res://scripts/trooper_class.gd")
 ## Main menu: singleplayer, host/join, lobby, armory (upgrade shop).
 
 var status: Label
@@ -157,6 +158,22 @@ func _build_main(holder: Control) -> Control:
 	diff_opt.selected = int(Game.settings["diff"])
 	diff_opt.item_selected.connect(func(i): Game.settings["diff"] = i; Game.write_save())
 	row.add_child(diff_opt)
+	var crow := HBoxContainer.new()
+	box.add_child(crow)
+	var cl := Label.new()
+	cl.text = "Class:"
+	crow.add_child(cl)
+	var cls_opt := OptionButton.new()
+	cls_opt.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	for i in TrooperClass.NAMES.size():
+		cls_opt.add_item("%s — %s" % [TrooperClass.NAMES[i], TrooperClass.DESCS[i].substr(0, 42)])
+	cls_opt.selected = Game.trooper_cls()
+	cls_opt.item_selected.connect(func(i): Game.save["cls"] = i; Game.write_save())
+	crow.add_child(cls_opt)
+	var vlab := Label.new()
+	vlab.text = "Droid Siege v%s" % Game.GAME_VERSION
+	vlab.modulate = Color(1, 1, 1, 0.5)
+	box.add_child(vlab)
 	Game.build_control_options(box)
 	_btn(box, "Singleplayer Mission", func(): Game.write_save(); Game.start_singleplayer())
 	# secondary buttons two per row so the card fits short windows even with keyboard options open

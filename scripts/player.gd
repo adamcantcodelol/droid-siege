@@ -1,4 +1,5 @@
 extends CharacterBody3D
+const TrooperClass = preload("res://scripts/trooper_class.gd")
 ## Clone trooper. The owning peer simulates movement/shooting; other peers show
 ## an interpolated proxy from synced state.
 
@@ -62,21 +63,25 @@ func _ready() -> void:
 	is_local = peer_id == multiplayer.get_unique_id()
 	collision_layer = 2
 	collision_mask = 1 | 4
-	var cs := CollisionShape3D.new()
-	var cap := CapsuleShape3D.new()
-	cap.radius = 0.4
-	cap.height = 1.8
-	cs.shape = cap
-	cs.position.y = 0.9
-	add_child(cs)
+	_cs = CollisionShape3D.new()
+	_cap = CapsuleShape3D.new()
+	_cap.radius = 0.4
+	_cap.height = 1.8
+	_cs.shape = _cap
+	_cs.position.y = 0.9
+	add_child(_cs)
+	if is_local:
+		cls = Game.trooper_cls()
 	_build_model()
 	net_pos = position
 	net_rot = rotation.y
 	if is_local:
+		cls = Game.trooper_cls()
 		max_health = Game.max_health()
 		health = max_health
-		mag_size = Game.mag_size()
+		mag_size = Game.mag_size(0)
 		mag = mag_size
+		stored_mag = [mag_size, Game.mag_size(1)]
 		grenades = int(Game.save["grenades"])
 		pivot = Node3D.new()
 		pivot.position = Vector3(0, 1.6, 0)
@@ -143,11 +148,29 @@ const SHOTGUN_PELLETS := 8
 const SHOTGUN_RANGE := 30.0
 var weapon := 0
 var stored_mag := [0, SHOTGUN_MAG]
-var anim_flags := 0          # bit0 firing, bit1 aiming, bit2 sprint, bit3 airborne, bit4 weapon slot
+var anim_flags := 0          # bit0 fire,1 aim,2 sprint,3 air,4-5 weapon,6 mech,7 crouch
 var shot_t := 0.0
 var _last_pos := Vector3.ZERO
 var _speed := 0.0
 var _shown_weapon := -1
+var is_crouching := false
+var crouch_toggle := false
+var crouch_eye_y := 1.6
+var stand_eye_y := 1.6
+var slide_t := 0.0
+var _cap: CapsuleShape3D = null
+var _cs: CollisionShape3D = null
+var cls := 0
+var z6_spin := 0.0
+var burst_left := 0
+var cmd_cd := 0.0
+var cmd_buff_t := 0.0
+var bonus_hp := 0.0
+var veh_vtype := 0
+var veh_heat := 0.0
+var veh_shell_cd := 0.0
+var _last_attacker_id := 0
+var _pvp_dead_sent := false
 
 
 func _build_model() -> void:
@@ -266,8 +289,8 @@ func _update_anim(delta: float) -> void:
 	if state != 0:
 		char_model.play("death")
 		return
-	var firing := (anim_flags & 1) != 0 or shot_t > 0.0
-	var aiming := (anim_flags & 2) != 0
+	var firing: bool = (anim_flags & 1) != 0 or shot_t > 0.0
+	var aiming: bool = (anim_flags & 2) != 0
 	if (anim_flags & 8) != 0:
 		char_model.play("jump")
 	elif _speed > 0.6:
@@ -338,11 +361,29 @@ func _physics_process(delta: float) -> void:
 	is_aiming = act and (Input.is_action_pressed("aim") or aim_toggled)
 	if act and Game.control_mode == 1:
 		_keyboard_look(delta)
-	is_sprinting = act and Input.is_action_pressed("sprint") and input.y < -0.1 and not is_aiming and reloading <= 0.0
+	_update_crouch(delta, act)
+	is_sprinting = act and Input.is_action_pressed("sprint") and input.y < -0.1 and not is_aiming and reloading <= 0.0 and not is_crouching
 	var speed := SPRINT_SPEED if is_sprinting else (AIM_SPEED if is_aiming else SPEED)
+	speed *= Game.class_speed_mult()
+	if weapon == 0 and str(Game.class_weapon(0).get("kind", "")) == "z6" and (Input.is_action_pressed("fire") or Input.is_action_pressed("kb_fire")):
+		speed *= float(Game.class_weapon(0).get("fire_slow", 0.72))
+	if is_crouching and slide_t <= 0.0:
+		speed *= 0.62
+	if slide_t > 0.0:
+		speed = SPRINT_SPEED * 1.30 * (slide_t / 0.45)
 	if in_mech >= 0:
-		speed = MECH_SPRINT if is_sprinting else MECH_SPEED
+		var vst: Dictionary = MechVisual.stats(veh_vtype)
+		speed = float(vst["boost"] if is_sprinting else vst["speed"])
 		_jump_buf = 0.0
+		if str(Game.class_weapon(0).get("kind", "")) == "z6" or true:
+			pass
+		# Heat cools when not firing
+		var cool: float = float(vst.get("heat_cool", 0.55))
+		if fire_cd > float(vst.get("interval", 0.3)) * 0.5:
+			veh_heat = maxf(0.0, veh_heat - cool * delta)
+		else:
+			veh_heat = maxf(0.0, veh_heat - cool * 0.35 * delta)
+		veh_shell_cd = maxf(0.0, veh_shell_cd - delta)
 	if act and Input.is_action_just_pressed("interact"):
 		if in_mech >= 0:
 			exit_mech()
@@ -373,7 +414,13 @@ func _physics_process(delta: float) -> void:
 	_place_camera()
 	# Camera zoom
 	if cam != null:
-		cam.fov = lerpf(cam.fov, 50.0 if is_aiming else (80.0 if is_sprinting else 72.0), minf(1.0, delta * 10.0))
+		var want_fov := 72.0
+		if is_sprinting:
+			want_fov = 80.0
+		if is_aiming:
+			var sc: float = float(Game.class_weapon(weapon).get("scope", 0.0))
+			want_fov = 75.0 / sc if sc > 1.0 else 50.0
+		cam.fov = lerpf(cam.fov, want_fov, minf(1.0, delta * 10.0))
 		spring.spring_length = lerpf(spring.spring_length, (7.0 if is_aiming else 8.5) if in_mech >= 0 else (1.8 if is_aiming else 3.2), minf(1.0, delta * 10.0))
 
 	# Weapon
@@ -382,11 +429,16 @@ func _physics_process(delta: float) -> void:
 		if reloading <= 0.0:
 			mag = mag_size
 	crosshair_on_enemy = _crosshair_enemy() != null
-	var want_fire := Input.is_action_pressed("fire") or Input.is_action_pressed("kb_fire")
+	var want_fire: bool = Input.is_action_pressed("fire") or Input.is_action_pressed("kb_fire")
 	if Game.control_mode == 1 and Game.auto_fire and crosshair_on_enemy:
 		want_fire = true
+	if not want_fire:
+		z6_spin = maxf(0.0, z6_spin - delta * 0.5)
+		if burst_left > 0 and fire_cd <= 0.0:
+			pass  # finish burst below
 	if act:
-		if want_fire and fire_cd <= 0.0 and reloading <= 0.0 and not is_sprinting:
+		var fire_ok: bool = want_fire or burst_left > 0
+		if fire_ok and fire_cd <= 0.0 and reloading <= 0.0 and not is_sprinting:
 			if in_mech >= 0:
 				_shoot_mech()
 			elif mag > 0:
@@ -406,10 +458,17 @@ func _physics_process(delta: float) -> void:
 			switch_weapon(1)
 		elif Input.is_action_just_pressed("weapon_next"):
 			switch_weapon(1 - weapon)
+		if Input.is_action_just_pressed("battle_cmd"):
+			_try_battle_command()
 
-	# Health
+	# Health + officer aura regen
+	cmd_cd = maxf(0.0, cmd_cd - delta)
+	cmd_buff_t = maxf(0.0, cmd_buff_t - delta)
 	if state == 0 and since_hit > 5.0 and health < max_health:
-		health = minf(max_health, health + 10.0 * delta)
+		var regen := 10.0
+		if Game.world != null:
+			regen += Game.world.officer_regen(peer_id)
+		health = minf(max_health, health + regen * delta)
 	if state == 1:
 		bleed -= delta
 		if bleed <= 0.0:
@@ -426,7 +485,7 @@ func _physics_process(delta: float) -> void:
 	sync_cd -= delta
 	if sync_cd <= 0.0:
 		sync_cd = 0.066  # 15 Hz player state (was 20 Hz)
-		anim_flags = (1 if shot_t > 0.0 else 0) | (2 if is_aiming else 0) | (4 if is_sprinting else 0) | (8 if not is_on_floor() else 0) | (weapon << 4) | (64 if in_mech >= 0 else 0)
+		anim_flags = (1 if shot_t > 0.0 else 0) | (2 if is_aiming else 0) | (4 if is_sprinting else 0) | (8 if not is_on_floor() else 0) | (weapon << 4) | (64 if in_mech >= 0 else 0) | (128 if is_crouching else 0)
 		Game.net_all("player_state", [position, rotation.y, pitch, health, state | (anim_flags << 2)], false)
 
 
@@ -504,7 +563,7 @@ func _animate_viewmodel(delta: float) -> void:
 	if viewmodel == null or not viewmodel.visible:
 		return
 	var hs := Vector2(velocity.x, velocity.z).length()
-	var on := is_on_floor() and hs > 0.5
+	var on: bool = is_on_floor() and hs > 0.5
 	_vm_t += delta * (11.0 if is_sprinting else 8.0) * (1.0 if on else 0.0)
 	var amp := clampf(hs / SPEED, 0.0, 1.4) * (0.012 if not is_aiming else 0.003)
 	var target := VM_BASE + Vector3(cos(_vm_t * 0.5) * amp, -absf(sin(_vm_t * 0.5)) * amp, 0)
@@ -524,8 +583,7 @@ func _animate_viewmodel(delta: float) -> void:
 var mech_cs: CollisionShape3D = null
 var _mech_t := 0.0
 var _mech_prev_ry := 0.0
-const MECH_SPEED := 4.5
-const MECH_SPRINT := 6.5
+# Vehicle movement pulled from MechVisual.stats(veh_vtype)
 
 
 func piloting() -> bool:
@@ -542,23 +600,30 @@ func exit_mech() -> void:
 
 
 func _shoot_mech() -> void:
+	var st: Dictionary = MechVisual.stats(veh_vtype)
+	if veh_heat >= float(st.get("heat_max", 1.0)):
+		return  # overheated
 	shot_t = 0.3
-	fire_cd = 0.35
+	fire_cd = float(st.get("interval", 0.38))
+	veh_heat = minf(float(st.get("heat_max", 1.0)), veh_heat + float(st.get("heat_rate", 0.2)))
 	var aim := _aim_point()
-	var from: Vector3 = mech_vis.get_node("Body/Gun/Muzzle").global_position if mech_vis != null else global_position + Vector3(0, 3, 0)
-	var to: Vector3 = aim["pos"]
+	var muz_n = null
+	if mech_vis != null:
+		muz_n = mech_vis.get_node_or_null("Body/Gun/Muzzle")
+	var from: Vector3 = muz_n.global_position if muz_n != null else global_position + Vector3(0, 2.5, 0)
+	var hit := _trace_shot(aim["pos"], 0.008)
+	# Prefer muzzle as visual start but trust barrel-trace collider
+	var to: Vector3 = hit["pos"]
 	Game.world.spawn_bolt(from, to, 0)
 	Game.net_all("bolt_fx", [from, to, 0], false)
 	Game.play_sfx("scatter", null, -4.0)
-	var col = aim["collider"]
-	var dmg := Game.weapon_damage() * 3.0
-	if col != null and col.has_method("get_peer_id"):
-		if Game.world.is_hostile(peer_id, col.get_peer_id()):
-			Game.net_server("req_pvp_damage", [col.get_peer_id(), dmg, global_position])
-			Game.world.hud.hit_marker(false)
-	elif col != null and col.has_method("get_enemy_id"):
-		Game.net_server("req_damage", [col.get_enemy_id(), dmg, global_position])
-		Game.world.hud.hit_marker(col.shield_blocks(global_position))
+	var dmg := Game.weapon_damage(0) * float(st.get("dmg", 1.0))
+	_apply_hit(hit["collider"], dmg, "vehicle", {}, to)
+	# TX-130 concussion shell on cooldown
+	if veh_vtype == 2 and veh_shell_cd <= 0.0 and Input.is_action_just_pressed("grenade"):
+		veh_shell_cd = float(st.get("shell_cd", 6.0))
+		Game.net_server("req_micro_splash", [to, float(st.get("shell_dmg", 45.0)), float(st.get("shell_r", 4.5))])
+		Game.play_sfx("explosion", to, -6.0)
 
 
 ## V toggles first person: camera at the eyes, own body hidden from this camera (render layer 2)
@@ -577,15 +642,22 @@ func set_first_person(on: bool) -> void:
 func _place_camera() -> void:
 	if cam == null:
 		return
-	var fp := first_person and in_mech < 0
+	var fp: bool = first_person and in_mech < 0
 	cam.cull_mask = (0xFFFFF & ~2) if fp else 0xFFFFF
 	if viewmodel == null:
 		viewmodel = _build_viewmodel()
 	viewmodel.visible = fp and state == 0
 	# mech: camera eye ~1.4 m above the cockpit roof and offset right, so the walker sits
 	# in the lower-left of the frame and the crosshair has clear sight to the horizon
-	pivot.position.y = 5.2 if in_mech >= 0 else 1.6
-	spring.position.x = 1.4 if in_mech >= 0 else 0.75
+	if in_mech >= 0:
+		var vst2: Dictionary = MechVisual.stats(veh_vtype)
+		pivot.position.y = float(vst2.get("cam_y", 5.0))
+		spring.position.x = float(vst2.get("cam_x", 1.4))
+	else:
+		pivot.position.y = crouch_eye_y
+		spring.position.x = 0.75
+		if slide_t > 0.0:
+			pivot.position.y -= 0.15
 	if fp:
 		cam.position = Vector3(0.0, 0.05, -0.3)
 		return
@@ -694,34 +766,107 @@ func _update_pose(delta: float) -> void:
 	var pil := piloting()
 	model.visible = not pil
 	if pil and mech_vis == null:
-		mech_vis = MechVisual.build()
+		mech_vis = MechVisual.build_type(veh_vtype)
 		add_child(mech_vis)
 		mech_cs = CollisionShape3D.new()
 		var bx := BoxShape3D.new()
-		bx.size = Vector3(1.6, 3.0, 1.8)
+		var vst3: Dictionary = MechVisual.stats(veh_vtype)
+		bx.size = vst3["size"]
 		mech_cs.shape = bx
-		mech_cs.position.y = 2.1
+		mech_cs.position.y = float(vst3["col_y"])
 		add_child(mech_cs)
+	elif pil and mech_vis != null and int(mech_vis.get_meta("vtype", veh_vtype)) != veh_vtype:
+		mech_vis.queue_free()
+		mech_vis = MechVisual.build_type(veh_vtype)
+		mech_vis.set_meta("vtype", veh_vtype)
+		add_child(mech_vis)
 	if mech_vis != null:
 		mech_vis.visible = pil
-		mech_cs.disabled = not pil
+		if mech_cs != null:
+			mech_cs.disabled = not pil
 		if pil:
 			var hv := Vector2(velocity.x, velocity.z).length() if is_local else net_pos.distance_to(position) * 10.0
 			_mech_t += delta
 			var turn := angle_difference(_mech_prev_ry, rotation.y) / maxf(delta, 0.001)
 			_mech_prev_ry = rotation.y
-			MechVisual.animate(mech_vis, _mech_t, clampf(hv / MECH_SPEED, 0.0, 1.0), turn)
-			MechVisual.flash(mech_vis, shot_t > 0.22)
+			var spd0: float = float(MechVisual.stats(veh_vtype)["speed"])
+			MechVisual.animate_type(mech_vis, veh_vtype, _mech_t, clampf(hv / maxf(spd0, 0.1), 0.0, 1.0), turn)
+			MechVisual.flash_type(mech_vis, veh_vtype, shot_t > 0.22)
 	_update_anim(delta)
 	if name_label != null:
 		name_label.text = display_name + ("  [DOWNED - hold E]" if state == 1 else ("  [KIA]" if state == 2 else ""))
 
 
+
+func aim_target_pos() -> Vector3:
+	return global_position + Vector3(0, crouch_eye_y * 0.85 if is_crouching else 1.2, 0)
+
+
+func _barrel_origin() -> Vector3:
+	var chest := global_position + Vector3(0, crouch_eye_y * 0.75, 0)
+	var muz: Vector3 = muzzle.global_position if muzzle != null else chest + Vector3(0, 0, -0.5)
+	# Exclude this CharacterBody3D rid only (CollisionShape3D has no get_rid)
+	var q := PhysicsRayQueryParameters3D.create(chest, muz, 1, [get_rid()])
+	var res := get_world_3d().direct_space_state.intersect_ray(q)
+	return chest if not res.is_empty() else muz
+
+
+## Two-stage aim: camera finds crosshair point, then barrel ray (layer walls+targets) is truth.
+func _trace_shot(aim_pos: Vector3, spread: float = 0.0) -> Dictionary:
+	var origin := _barrel_origin()
+	var dir := (aim_pos - origin).normalized()
+	if spread > 0.0:
+		var basis := cam.global_transform.basis if cam != null else global_transform.basis
+		dir = (dir + basis.x * randf_range(-spread, spread) + basis.y * randf_range(-spread, spread)).normalized()
+	var end := origin + dir * (origin.distance_to(aim_pos) + 0.5)
+	if origin.distance_to(aim_pos) < 0.2:
+		end = origin + dir * 250.0
+	var q := PhysicsRayQueryParameters3D.create(origin, end, _shot_mask(), [get_rid()])
+	var res := get_world_3d().direct_space_state.intersect_ray(q)
+	if res.is_empty():
+		return {"pos": end, "collider": null, "from": origin}
+	return {"pos": res["position"], "collider": res["collider"], "from": origin}
+
+
+func _update_crouch(delta: float, act: bool) -> void:
+	if in_mech >= 0:
+		is_crouching = false
+		crouch_toggle = false
+		slide_t = 0.0
+		return
+	if act and Input.is_action_just_pressed("crouch_toggle"):
+		crouch_toggle = not crouch_toggle
+	var want: bool = crouch_toggle or (act and Input.is_action_pressed("crouch"))
+	# Tactical slide: C while sprinting
+	if act and Input.is_action_just_pressed("crouch") and is_sprinting and is_on_floor() and slide_t <= 0.0:
+		slide_t = 0.45
+		want = true
+	if slide_t > 0.0:
+		slide_t -= delta
+		want = true
+	# Stand-up check under low geometry
+	if is_crouching and not want and _cap != null:
+		var q := PhysicsRayQueryParameters3D.create(
+			global_position + Vector3(0, 0.5, 0), global_position + Vector3(0, 1.85, 0), 1, [get_rid()])
+		if not get_world_3d().direct_space_state.intersect_ray(q).is_empty():
+			want = true
+	is_crouching = want
+	var target_h := 1.1 if is_crouching else 1.8
+	var target_eye := 0.98 if is_crouching else stand_eye_y
+	if _cap != null:
+		_cap.height = lerpf(_cap.height, target_h, minf(1.0, delta * 12.0))
+		_cs.position.y = _cap.height * 0.5
+	crouch_eye_y = lerpf(crouch_eye_y, target_eye, minf(1.0, delta * 12.0))
+
+
 func _aim_point() -> Dictionary:
-	var origin := cam.global_position if cam != null else global_position + Vector3(0, 1.6, 0)
+	var origin := cam.global_position if cam != null else global_position + Vector3(0, crouch_eye_y, 0)
 	var fwd := -cam.global_transform.basis.z if cam != null else -global_transform.basis.z
+	var spread := 0.012
+	if is_crouching:
+		spread *= 0.65
 	if not is_aiming:
-		fwd = (fwd + Vector3(randf_range(-1, 1), randf_range(-1, 1), randf_range(-1, 1)) * 0.012).normalized()
+		fwd = (fwd + Vector3(randf_range(-1, 1), randf_range(-1, 1), randf_range(-1, 1)) * spread).normalized()
 	var q := PhysicsRayQueryParameters3D.create(origin, origin + fwd * 250.0, _shot_mask(), [get_rid()])
 	var res := get_world_3d().direct_space_state.intersect_ray(q)
 	if res.is_empty():
@@ -731,26 +876,70 @@ func _aim_point() -> Dictionary:
 
 func _shoot() -> void:
 	shot_t = 0.3
-	if weapon == 1:
+	var w: Dictionary = Game.class_weapon(weapon)
+	var kind: String = str(w.get("kind", "rifle"))
+	if kind == "scatter":
 		_shoot_scatter()
 		return
-	fire_cd = Game.fire_interval()
+	# Burst carbine: queue remaining bolts
+	if kind == "burst" and burst_left <= 0:
+		burst_left = int(w.get("burst", 4)) - 1
+		fire_cd = float(w.get("burst_gap", 0.045))
+	elif kind == "burst" and burst_left > 0:
+		burst_left -= 1
+		fire_cd = float(w.get("burst_gap", 0.045)) if burst_left > 0 else Game.fire_interval(weapon)
+	elif kind == "z6":
+		z6_spin = minf(1.0, z6_spin + 0.08)
+		var iv: float = lerpf(float(w.get("interval", 0.13)), float(w.get("min_interval", 0.055)), z6_spin)
+		fire_cd = iv * pow(0.92, int(Game.save["rate"]))
+	else:
+		fire_cd = Game.fire_interval(weapon)
 	mag -= 1
 	var aim := _aim_point()
-	var from := muzzle.global_position
-	var to: Vector3 = aim["pos"]
-	Game.world.spawn_bolt(from, to, 0)
-	Game.net_all("bolt_fx", [from, to, 0], false)
-	var col = aim["collider"]
-	if col != null and col.has_method("get_peer_id"):
-		if Game.world.is_hostile(peer_id, col.get_peer_id()):
-			Game.net_server("req_pvp_damage", [col.get_peer_id(), Game.weapon_damage(), global_position])
-			Game.world.hud.hit_marker(false)
-	elif col != null and col.has_method("get_enemy_id"):
-		Game.net_server("req_damage", [col.get_enemy_id(), Game.weapon_damage(), global_position])
-		Game.world.hud.hit_marker(col.shield_blocks(global_position))
+	var spr := 0.0 if is_aiming else 0.012
+	if is_crouching:
+		spr *= 0.65
+	if kind == "sniper" and is_aiming:
+		spr = 0.0
+	var hit := _trace_shot(aim["pos"], spr)
+	var from: Vector3 = hit["from"]
+	var to: Vector3 = hit["pos"]
+	var bolt_k: int = int(w.get("bolt", 0))
+	Game.world.spawn_bolt(from, to, bolt_k)
+	Game.net_all("bolt_fx", [from, to, bolt_k], false)
+	var dmg := Game.weapon_damage(weapon) * _dmg_aura_mult()
+	var col = hit["collider"]
+	_apply_hit(col, dmg, kind, w, to)
 	if mag <= 0:
 		_start_reload()
+
+
+func _dmg_aura_mult() -> float:
+	var m := 1.0
+	if cmd_buff_t > 0.0:
+		m *= 1.1
+	if Game.world != null:
+		m *= Game.world.officer_aura_mult(peer_id)
+	return m
+
+
+func _apply_hit(col, dmg: float, kind: String, w: Dictionary, hit_pos: Vector3) -> void:
+	if col == null:
+		return
+	if col.has_method("get_peer_id"):
+		if Game.world.is_hostile(peer_id, col.get_peer_id()):
+			# Headshot bonus vs players near head height
+			if kind == "sniper" and hit_pos.y > col.global_position.y + 1.35:
+				dmg *= float(w.get("head_mult", 1.5))
+			Game.net_server("req_pvp_damage", [col.get_peer_id(), dmg, global_position])
+			Game.world.hud.hit_marker(false)
+	elif col.has_method("get_enemy_id"):
+		if kind == "sniper" and hit_pos.y > col.global_position.y + 1.45:
+			dmg *= float(w.get("head_mult", 1.5))
+		Game.net_server("req_damage", [col.get_enemy_id(), dmg, global_position])
+		Game.world.hud.hit_marker(col.shield_blocks(global_position))
+	if float(w.get("splash", 0.0)) > 0.0:
+		Game.net_server("req_micro_splash", [hit_pos, float(w["splash"]), float(w.get("splash_r", 2.2))])
 
 
 ## Swap between the rifle (slot 1) and the scatter blaster (slot 2); each keeps its own magazine.
@@ -759,8 +948,12 @@ func switch_weapon(w: int) -> void:
 		return
 	stored_mag[weapon] = mag
 	weapon = w
-	mag_size = Game.mag_size() if w == 0 else SHOTGUN_MAG
-	mag = stored_mag[w]
+	mag_size = Game.mag_size(w)
+	if stored_mag.size() < 2:
+		stored_mag = [mag_size, Game.mag_size(1)]
+	mag = stored_mag[w] if stored_mag[w] > 0 else mag_size
+	z6_spin = 0.0
+	burst_left = 0
 	reloading = 0.0
 	fire_cd = maxf(fire_cd, 0.35)
 	Game.play_sfx("switch")
@@ -769,36 +962,35 @@ func switch_weapon(w: int) -> void:
 
 ## Scatter blaster: 8 pellets in a cone, damage aggregated per target into one request each.
 func _shoot_scatter() -> void:
-	fire_cd = 0.85 * pow(0.92, int(Game.save["rate"]))
+	var w: Dictionary = Game.class_weapon(weapon)
+	fire_cd = Game.fire_interval(weapon)
 	mag -= 1
-	var origin := cam.global_position if cam != null else global_position + Vector3(0, 1.6, 0)
-	var basis := cam.global_transform.basis if cam != null else global_transform.basis
+	var aim := _aim_point()
+	var pellets: int = int(w.get("pellets", SHOTGUN_PELLETS))
+	var rng: float = float(w.get("range", SHOTGUN_RANGE))
 	var spread := 0.03 if is_aiming else 0.05
-	var per := Game.weapon_damage() * 0.45
+	if is_crouching:
+		spread *= 0.65
+	var per := Game.weapon_damage(weapon) * 0.45 * _dmg_aura_mult()
 	var totals := {}
-	var space := get_world_3d().direct_space_state
-	for i in SHOTGUN_PELLETS:
-		var d := (-basis.z + basis.x * randf_range(-spread, spread) + basis.y * randf_range(-spread, spread)).normalized()
-		var q := PhysicsRayQueryParameters3D.create(origin, origin + d * SHOTGUN_RANGE, _shot_mask(), [get_rid()])
-		var res := space.intersect_ray(q)
-		var to: Vector3 = origin + d * SHOTGUN_RANGE if res.is_empty() else res["position"]
+	var barrel := _barrel_origin()
+	for i in pellets:
+		var hit := _trace_shot(aim["pos"] + Vector3(randf_range(-1,1), randf_range(-1,1), randf_range(-1,1)) * spread * 8.0, spread)
+		# Clamp pellet travel
+		if barrel.distance_to(hit["pos"]) > rng:
+			hit["pos"] = barrel + (hit["pos"] - barrel).normalized() * rng
+			hit["collider"] = null
 		if i % 2 == 0:
-			Game.world.spawn_bolt(muzzle.global_position, to, 2)
-			Game.net_all("bolt_fx", [muzzle.global_position, to, 2], false)
-		if not res.is_empty() and res["collider"] != null:
-			var c = res["collider"]
-			var falloff := clampf(1.25 - origin.distance_to(to) / SHOTGUN_RANGE, 0.35, 1.0)
+			Game.world.spawn_bolt(hit["from"], hit["pos"], int(w.get("bolt", 2)))
+			Game.net_all("bolt_fx", [hit["from"], hit["pos"], int(w.get("bolt", 2))], false)
+		var c = hit["collider"]
+		if c != null:
+			var falloff := clampf(1.25 - barrel.distance_to(hit["pos"]) / rng, 0.35, 1.0)
 			totals[c] = totals.get(c, 0.0) + per * falloff
 	for c in totals:
 		if not is_instance_valid(c):
 			continue
-		if c.has_method("get_peer_id"):
-			if Game.world.is_hostile(peer_id, c.get_peer_id()):
-				Game.net_server("req_pvp_damage", [c.get_peer_id(), totals[c], global_position])
-				Game.world.hud.hit_marker(false)
-		elif c.has_method("get_enemy_id"):
-			Game.net_server("req_damage", [c.get_enemy_id(), totals[c], global_position])
-			Game.world.hud.hit_marker(c.shield_blocks(global_position))
+		_apply_hit(c, totals[c], "scatter", w, c.global_position if "global_position" in c else barrel)
 	if mag <= 0:
 		_start_reload()
 
@@ -806,7 +998,8 @@ func _shoot_scatter() -> void:
 func _start_reload() -> void:
 	if reloading > 0.0 or mag >= mag_size:
 		return
-	reloading = RELOAD_TIME * (1.4 if weapon == 1 else 1.0)
+	var w: Dictionary = Game.class_weapon(weapon)
+	reloading = float(w.get("reload", RELOAD_TIME))
 	Game.play_sfx("reload")
 
 
@@ -825,27 +1018,42 @@ func _throw_grenade() -> void:
 	Game.net_all("grenade_fx", [pos, vel], false)
 
 
-func take_damage(dmg: float, from = null) -> void:
+func take_damage(dmg: float, from = null, attacker_id: int = 0) -> void:
 	if god or state != 0 or not is_local:
 		return
-	if in_mech >= 0:
-		dmg *= 0.35   # walker armour
+	# Vehicle absorbs hits on its own hull — trooper HP untouched until destruction bailout
+	if in_mech >= 0 and Game.world != null:
+		Game.world.damage_vehicle(in_mech, dmg, attacker_id, from if from is Vector3 else global_position)
+		Game.play_sfx("hurt", null, -8.0)
+		if Game.world.hud != null:
+			Game.world.hud.damage_flash()
+		return
+	if attacker_id != 0:
+		_last_attacker_id = attacker_id
+	# Bonus temporary shield (Officer Battle Command) absorbs first
+	if bonus_hp > 0.0:
+		var soak := minf(bonus_hp, dmg)
+		bonus_hp -= soak
+		dmg -= soak
+		if dmg <= 0.0:
+			return
 	health -= dmg
 	since_hit = 0.0
-	if health <= 0.0:
-		exit_mech()
 	Game.play_sfx("hurt", null, -6.0)
 	if Game.world.hud != null:
 		Game.world.hud.damage_flash()
 		if from is Vector3:
 			Game.world.hud.damage_from(from)
 	if health <= 0.0 and Game.world.versus:
+		if _pvp_dead_sent:
+			return
+		_pvp_dead_sent = true
 		health = 0.0
 		state = 2
 		respawn_t = 5.0
 		reloading = 0.0
 		Game.play_sfx("down")
-		Game.net_server("pvp_died", [])
+		Game.net_server("pvp_died", [_last_attacker_id])
 		return
 	if health <= 0.0:
 		health = 0.0
@@ -865,6 +1073,10 @@ func respawn() -> void:
 	state = 0
 	mag = mag_size
 	since_hit = 10.0
+	_pvp_dead_sent = false
+	_last_attacker_id = 0
+	bonus_hp = 0.0
+	is_crouching = false
 
 
 func revive() -> void:
@@ -882,3 +1094,30 @@ func net_update(pos: Vector3, ry: float, p: float, hp: float, st: int) -> void:
 	health = hp
 	state = st & 3
 	anim_flags = st >> 2
+	is_crouching = (anim_flags & 128) != 0
+
+
+
+func _try_battle_command() -> void:
+	if cls != 3 or cmd_cd > 0.0 or state != 0:
+		return
+	var d: Dictionary = TrooperClass.def(3)
+	cmd_cd = float(d.get("cmd_cd", 18.0))
+	cmd_buff_t = float(d.get("cmd_dur", 6.0))
+	bonus_hp = float(d.get("cmd_shield", 25.0))
+	Game.play_sfx("capture", null, -4.0)
+	if Game.world != null:
+		Game.world.apply_battle_command(peer_id, global_position)
+		Game.world.show_message("Battle Command! +shield & speed for nearby allies.")
+
+
+func apply_class(new_cls: int) -> void:
+	cls = TrooperClass.clamp_id(new_cls)
+	if is_local:
+		Game.save["cls"] = cls
+		Game.write_save()
+	max_health = Game.max_health() if is_local else float(TrooperClass.def(cls).get("hp", 100.0))
+	health = minf(health, max_health)
+	mag_size = Game.mag_size(weapon) if is_local else int(TrooperClass.weapon(cls, weapon).get("mag", 24))
+	mag = mini(mag, mag_size)
+	stored_mag = [Game.mag_size(0), Game.mag_size(1)] if is_local else stored_mag

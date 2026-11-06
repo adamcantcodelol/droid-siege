@@ -1,11 +1,13 @@
 extends Node
+const TrooperClass = preload("res://scripts/trooper_class.gd")
 ## Global autoload: save data, upgrades, networking, RPC relay, generated sounds, test harness.
 
 const SAVE_PATH := "user://droid_siege_save.json"
 const DEFAULT_PORT := 7777
 const MAX_PLAYERS := 4
+const GAME_VERSION := "1.1"
 const MAX_LEVEL := 5
-const GRENADE_COST := 60
+const GRENADE_COST := 100
 const MAX_GRENADES := 6
 const MENU_SCENE := "res://scenes/main_menu.tscn"
 const WORLD_SCENE := "res://scenes/world.tscn"
@@ -39,11 +41,34 @@ var MAPS: Array = [
 		"sky_top": Color(0.12, 0.15, 0.2), "sky_hor": Color(0.35, 0.42, 0.5),
 		"fog": Color(0.36, 0.42, 0.5), "fog_density": 0.011, "sun": Color(0.75, 0.82, 1.0), "sun_energy": 0.6,
 		"ambient": 0.5, "sun_rot": Vector3(-65, 20, 0), "post_col": Color(0.75, 0.78, 0.82), "lz_glow": Color(0.5, 0.8, 1.0), "high": [Vector3(0, 3, -5)]},
+	{"name": "Umbara Shadow Airbase", "layout": "umbara",
+		"posts": [Vector3(-35, 0, -25), Vector3(40, 0, -30), Vector3(5, 0, 25)],
+		"lz": Vector3(0, 0, 75), "spawns": [Vector3(0, 0, 84), Vector3(0, 0, -84)],
+		"ground": Color(0.08, 0.06, 0.14), "cliff": Color(0.12, 0.08, 0.2), "rock": Color(0.18, 0.12, 0.3),
+		"sky_top": Color(0.02, 0.02, 0.08), "sky_hor": Color(0.18, 0.08, 0.35),
+		"fog": Color(0.12, 0.06, 0.22), "fog_density": 0.014, "sun": Color(0.55, 0.7, 1.0), "sun_energy": 0.35,
+		"ambient": 0.55, "sun_rot": Vector3(-55, -20, 0), "post_col": Color(0.35, 0.55, 0.7), "lz_glow": Color(0.3, 1.0, 0.95), "high": [Vector3(0, 6.05, -5)]},
+	{"name": "Christophsis Crystal Plaza", "layout": "christophsis",
+		"posts": [Vector3(-40, 0, -20), Vector3(45, 0, -25), Vector3(0, 0, 30)],
+		"lz": Vector3(55, 0, 70), "spawns": [Vector3(60, 0, 82), Vector3(-60, 0, -82)],
+		"ground": Color(0.22, 0.32, 0.4), "cliff": Color(0.18, 0.28, 0.38), "rock": Color(0.25, 0.55, 0.65),
+		"sky_top": Color(0.08, 0.16, 0.28), "sky_hor": Color(0.35, 0.65, 0.75),
+		"fog": Color(0.3, 0.55, 0.65), "fog_density": 0.008, "sun": Color(0.7, 0.9, 1.0), "sun_energy": 0.85,
+		"ambient": 0.6, "sun_rot": Vector3(-48, 40, 0), "post_col": Color(0.45, 0.75, 0.85), "lz_glow": Color(0.4, 0.95, 1.0), "high": []},
+	{"name": "Mustafar Lava Refinery", "layout": "mustafar",
+		"posts": [Vector3(-30, 0, -35), Vector3(35, 0, -20), Vector3(0, 0, 25)],
+		"lz": Vector3(0, 0, 72), "spawns": [Vector3(-8, 0, 82), Vector3(8, 0, -82)],
+		"ground": Color(0.18, 0.1, 0.08), "cliff": Color(0.12, 0.08, 0.07), "rock": Color(0.25, 0.12, 0.08),
+		"sky_top": Color(0.15, 0.05, 0.02), "sky_hor": Color(0.55, 0.2, 0.08),
+		"fog": Color(0.45, 0.18, 0.08), "fog_density": 0.012, "sun": Color(1.0, 0.55, 0.25), "sun_energy": 0.9,
+		"ambient": 0.45, "sun_rot": Vector3(-35, 10, 0), "post_col": Color(0.55, 0.35, 0.25), "lz_glow": Color(1.0, 0.45, 0.15), "high": [Vector3(0, 1.0, 5)],
+		"lava": [Vector3(0, -0.4, 0), Vector3(50, -0.4, 40), Vector3(-45, -0.4, -20)]},
 ]
 var DIFFICULTIES: Array = [
-	{"name": "Recruit", "hp": 0.75, "dmg": 0.6, "cap": -1, "credits": 0.75},
-	{"name": "Veteran", "hp": 1.0, "dmg": 1.0, "cap": 0, "credits": 1.0},
-	{"name": "Commando", "hp": 1.3, "dmg": 1.4, "cap": 3, "credits": 1.5},
+	{"name": "Cadet", "hp": 0.75, "dmg": 0.55, "cap": -1, "credits": 0.7, "react": 0.55, "lead": 0.0, "ai": 0},
+	{"name": "Trooper", "hp": 1.0, "dmg": 1.0, "cap": 0, "credits": 1.0, "react": 0.30, "lead": 0.0, "ai": 1},
+	{"name": "Veteran", "hp": 1.2, "dmg": 1.25, "cap": 2, "credits": 1.35, "react": 0.14, "lead": 0.55, "ai": 2},
+	{"name": "Clone Commander", "hp": 1.4, "dmg": 1.5, "cap": 4, "credits": 1.7, "react": 0.05, "lead": 0.9, "ai": 3},
 ]
 
 signal lobby_changed
@@ -115,8 +140,8 @@ func _ready() -> void:
 
 func controls_help() -> String:
 	if control_mode == 1:
-		return "TRACKPAD / KEYBOARD: WASD move, Arrows or J/L turn + I/K look, F or Ctrl fire (trackpad tap also fires), Q or Alt toggle aim, Shift sprint, Space jump, R reload, G grenade, E (hold) revive, Esc/P/M or Menu button pause. Aim assist pulls toward droids near the crosshair%s." % (", auto-fire ON" if auto_fire else "")
-	return "MOUSE + KEYBOARD: WASD move, Mouse look, Left click fire, Right click aim, Shift sprint, Space jump, R reload, G grenade, E (hold) revive, Esc/P/M or Menu button pause. On the web Esc unlocks the mouse and opens pause — click Resume to recapture."
+		return "TRACKPAD / KEYBOARD: WASD move, Arrows or J/L turn + I/K look, F or Ctrl fire (trackpad tap also fires), Q or Alt toggle aim, Shift sprint, Space jump, C crouch / Z toggle, R reload, G grenade, E (hold) revive, X battle command (Officer), Esc/P/M or Menu button pause. Aim assist pulls toward droids near the crosshair%s." % (", auto-fire ON" if auto_fire else "")
+	return "MOUSE + KEYBOARD: WASD move, Mouse look, Left click fire, Right click aim, Shift sprint, Space jump, C crouch / Z toggle, R reload, G grenade, E (hold) revive, X battle command (Officer), Esc/P/M or Menu button pause. On the web Esc unlocks the mouse and opens pause — click Resume to recapture."
 
 
 ## Adds the Controls selector (+ turn speed, aim assist, auto-fire) to a menu box.
@@ -233,7 +258,11 @@ func _setup_input() -> void:
 	_bind("weapon1", [KEY_1])
 	_bind("view_toggle", [KEY_V])
 	_bind("weapon2", [KEY_2])
-	_bind("weapon_next", [KEY_X, KEY_C])
+	_bind("weapon_next", [KEY_3])
+	_bind("crouch", [KEY_C])
+	_bind("crouch_toggle", [KEY_Z])
+	_bind("battle_cmd", [KEY_X])
+	_bind("emote", [KEY_B])
 	_bind("fire", [], MOUSE_BUTTON_LEFT)
 	_bind("aim", [], MOUSE_BUTTON_RIGHT)
 
@@ -254,7 +283,7 @@ func _bind(action: String, keys: Array, mouse_button: int = 0) -> void:
 # ---------------------------------------------------------------- save / upgrades
 func default_save() -> Dictionary:
 	return {"credits": 0, "dmg": 0, "rate": 0, "mag": 0, "armor": 0, "grenades": 2,
-		"missions": 0, "wins": 0, "name": "Trooper", "sens": 0.0025, "map": 0, "diff": 1, "controls": 0, "turn_speed": 2.6, "auto_fire": false, "aim_assist": true, "ws_url": "", "relay_url": "", "relay_pref": 0, "mode": 0, "quality": -1, "fp": false}
+		"missions": 0, "wins": 0, "name": "Trooper", "sens": 0.0025, "map": 0, "diff": 1, "controls": 0, "turn_speed": 2.6, "auto_fire": false, "aim_assist": true, "ws_url": "", "relay_url": "", "relay_pref": 0, "mode": 0, "quality": -1, "fp": false, "cls": 0}
 
 
 func load_save() -> void:
@@ -294,8 +323,11 @@ func write_save() -> void:
 		f.store_string(JSON.stringify(save, "\t"))
 
 
+const UPGRADE_COSTS := [150, 300, 500, 800, 1200]
+
+
 func upgrade_cost(key: String) -> int:
-	return int(150.0 * pow(1.7, int(save[key])))
+	return UPGRADE_COSTS[clampi(int(save[key]), 0, UPGRADE_COSTS.size() - 1)]
 
 
 func buy_upgrade(key: String) -> bool:
@@ -319,20 +351,46 @@ func buy_grenade() -> bool:
 	return true
 
 
-func weapon_damage() -> float:
-	return 20.0 + 6.0 * int(save["dmg"])
+func trooper_cls() -> int:
+	return TrooperClass.clamp_id(int(save.get("cls", 0)))
 
 
-func fire_interval() -> float:
-	return 0.16 * pow(0.88, int(save["rate"]))
+func class_def() -> Dictionary:
+	return TrooperClass.def(trooper_cls())
 
 
-func mag_size() -> int:
-	return 24 + 8 * int(save["mag"])
+func class_weapon(slot: int = -1) -> Dictionary:
+	var lp = world.local_player() if world != null else null
+	var s: int = slot if slot >= 0 else (lp.weapon if lp != null else 0)
+	return TrooperClass.weapon(trooper_cls(), s)
+
+
+func weapon_damage(slot: int = -1) -> float:
+	var w := class_weapon(slot)
+	var base: float = float(w.get("dmg", 20.0))
+	var mult := 1.0 + 0.06 * int(save["dmg"])  # armory still scales
+	# Officer aura (self half) applied by caller when relevant
+	return base * mult
+
+
+func fire_interval(slot: int = -1) -> float:
+	var w := class_weapon(slot)
+	var base: float = float(w.get("interval", 0.16))
+	return base * pow(0.92, int(save["rate"]))
+
+
+func mag_size(slot: int = -1) -> int:
+	var w := class_weapon(slot)
+	return int(w.get("mag", 24)) + 8 * int(save["mag"])
 
 
 func max_health() -> float:
-	return 100.0 + 25.0 * int(save["armor"])
+	var base: float = float(class_def().get("hp", 100.0))
+	return base + 25.0 * int(save["armor"])
+
+
+func class_speed_mult() -> float:
+	return float(class_def().get("speed", 1.0))
 
 
 # ---------------------------------------------------------------- sounds (generated tones)
@@ -722,10 +780,20 @@ func is_connected_online() -> bool:
 		and multiplayer.multiplayer_peer.get_connection_status() == MultiplayerPeer.CONNECTION_CONNECTED
 
 
+## Tracks nested synchronous callv during local net_* so _sender() stays correct for PvP.
+var _local_rpc_depth := 0
+
+
+func _local_callv(method: String, args: Array) -> void:
+	_local_rpc_depth += 1
+	callv(method, args)
+	_local_rpc_depth -= 1
+
+
 ## Call method locally (optional) and on every remote peer.
 func net_all(method: String, args: Array = [], include_self: bool = true) -> void:
 	if include_self:
-		callv(method, args)
+		_local_callv(method, args)
 	if is_connected_online():
 		callv("rpc", [method] + args)
 
@@ -733,7 +801,7 @@ func net_all(method: String, args: Array = [], include_self: bool = true) -> voi
 ## Call method on the server (directly if we are the server).
 func net_server(method: String, args: Array = []) -> void:
 	if multiplayer.is_server():
-		callv(method, args)
+		_local_callv(method, args)
 	elif is_connected_online():
 		callv("rpc_id", [1, method] + args)
 
@@ -741,12 +809,15 @@ func net_server(method: String, args: Array = []) -> void:
 ## Call method on one peer (directly if that peer is us).
 func net_peer(pid: int, method: String, args: Array = []) -> void:
 	if pid == multiplayer.get_unique_id():
-		callv(method, args)
+		_local_callv(method, args)
 	elif is_connected_online():
 		callv("rpc_id", [pid, method] + args)
 
 
 func _sender() -> int:
+	# Nested local callv keeps the outer remote sender id; return our id instead.
+	if _local_rpc_depth > 0:
+		return multiplayer.get_unique_id()
 	var s := multiplayer.get_remote_sender_id()
 	return s if s != 0 else multiplayer.get_unique_id()
 
@@ -893,6 +964,21 @@ func req_explode(pos: Vector3) -> void:
 
 
 @rpc("any_peer", "call_remote", "reliable")
+func req_micro_splash(pos: Vector3, dmg: float, radius: float) -> void:
+	if world != null and multiplayer.is_server():
+		world.micro_splash(pos, _sender(), clampf(dmg, 0.0, 120.0), clampf(radius, 0.5, 8.0))
+
+
+@rpc("authority", "call_remote", "reliable")
+func battle_cmd_fx() -> void:
+	if world != null:
+		var lp = world.local_player()
+		if lp != null:
+			lp.bonus_hp = maxf(lp.bonus_hp, 25.0)
+			lp.cmd_buff_t = maxf(lp.cmd_buff_t, 6.0)
+
+
+@rpc("any_peer", "call_remote", "reliable")
 func grenade_fx(pos: Vector3, vel: Vector3) -> void:
 	if world != null:
 		world.spawn_grenade(pos, vel, false)
@@ -917,11 +1003,11 @@ func enemy_died(eid: int, pos: Vector3, killer: int, etype: int) -> void:
 
 
 @rpc("authority", "call_remote", "reliable")
-func hit_player(dmg: float, from: Vector3) -> void:
+func hit_player(dmg: float, from: Vector3, attacker_id: int = 0) -> void:
 	if world != null:
 		var lp = world.local_player()
 		if lp != null:
-			lp.take_damage(dmg, from)
+			lp.take_damage(dmg, from, attacker_id)
 
 
 @rpc("any_peer", "call_remote", "reliable")
@@ -948,9 +1034,9 @@ func req_pvp_damage(target: int, dmg: float, from: Vector3) -> void:
 
 
 @rpc("any_peer", "call_remote", "reliable")
-func pvp_died() -> void:
+func pvp_died(killer_id: int = 0) -> void:
 	if world != null and multiplayer.is_server():
-		world.on_pvp_died(_sender())
+		world.on_pvp_died(_sender(), killer_id)
 
 
 @rpc("authority", "call_remote", "unreliable_ordered")
@@ -986,7 +1072,7 @@ func mission_end(win: bool, credits: int, kills: int) -> void:
 # ---------------------------------------------------------------- headless test harness
 func _start_test() -> void:
 	match test_mode:
-		"smoke", "smoke2", "smokefail", "walkcap", "kbtest", "weapons", "hitbox", "camview", "horde", "mech":
+		"smoke", "smoke2", "smokefail", "walkcap", "kbtest", "weapons", "hitbox", "camview", "horde", "mech", "walls", "antitank", "classes":
 			player_name = "SmokeTester"
 			control_mode = 1 if test_mode == "kbtest" else 0
 			aim_assist = true
@@ -998,7 +1084,7 @@ func _start_test() -> void:
 			player_name = "Bench"
 			settings = {"map": int(test_mode.right(1)), "diff": 1, "mode": 0}
 			start_singleplayer()
-		"mapcheck0", "mapcheck1", "mapcheck2":
+		"mapcheck0", "mapcheck1", "mapcheck2", "mapcheck3", "mapcheck4", "mapcheck5":
 			player_name = "MapTester"
 			settings = {"map": int(test_mode.right(1)), "diff": 1, "mode": 0}
 			start_singleplayer()
@@ -1013,6 +1099,13 @@ func _start_test() -> void:
 		"pvp_client":
 			player_name = "BlueClient"
 			print("[test] pvp client err='%s'" % join_game("127.0.0.1", DEFAULT_PORT + 2))
+		"pvp_bidir_server":
+			player_name = "RedHost"
+			settings = {"map": 0, "diff": 1, "mode": 1}
+			print("[test] pvp bidir server err='%s'" % host_game(DEFAULT_PORT + 3))
+		"pvp_bidir_client":
+			player_name = "BlueClient"
+			print("[test] pvp bidir client err='%s'" % join_game("127.0.0.1", DEFAULT_PORT + 3))
 		"live_backup_host":
 			player_name = "BackupHost"
 			settings = {"map": 0, "diff": 1, "mode": 0}
@@ -1142,14 +1235,14 @@ func _process(_delta: float) -> void:
 				var scene := get_tree().current_scene
 				print("[test] MENU OK scene=", scene.name if scene else "none")
 				get_tree().quit(0)
-		"pvp_server":
+		"pvp_server", "pvp_bidir_server":
 			if not in_mission and players.size() >= 2:
 				start_mission()
 			if elapsed > 80.0 and not _test_done:
 				_test_done = true
 				print("[test] PVP SERVER FAIL timeout")
 				get_tree().quit(1)
-		"pvp_client":
+		"pvp_client", "pvp_bidir_client":
 			if elapsed > 80.0 and not _test_done:
 				_test_done = true
 				print("[test] PVP CLIENT FAIL timeout")

@@ -1,4 +1,6 @@
 extends CanvasLayer
+const MechVisual = preload("res://scripts/mech.gd")
+const TrooperClass = preload("res://scripts/trooper_class.gd")
 ## In-mission HUD: objective, health, ammo, squad, messages, pause and end screens.
 
 var world
@@ -31,6 +33,11 @@ var dmg_ind: Control
 var dmg_poly: Polygon2D
 var dmg_from := Vector3.ZERO
 var dmg_time := 0.0
+var veh_bar: ProgressBar
+var veh_label: Label
+var ver_label: Label
+var controls_hint: Label
+var _hud_cache := {}
 
 
 func _ready() -> void:
@@ -59,9 +66,29 @@ func _ready() -> void:
 	fill.bg_color = Color(0.2, 0.75, 0.3)
 	health_bar.add_theme_stylebox_override("fill", fill)
 	root.add_child(health_bar)
+	veh_label = _label(root, 16, Vector2(20, -100), Control.PRESET_BOTTOM_LEFT)
+	veh_label.add_theme_color_override("font_color", Color(1.0, 0.7, 0.25))
+	veh_bar = ProgressBar.new()
+	veh_bar.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
+	veh_bar.position = Vector2(20, -78)
+	veh_bar.size = Vector2(280, 14)
+	veh_bar.show_percentage = false
+	var vfill := StyleBoxFlat.new()
+	vfill.bg_color = Color(0.95, 0.55, 0.15)
+	veh_bar.add_theme_stylebox_override("fill", vfill)
+	veh_bar.visible = false
+	root.add_child(veh_bar)
+	ver_label = _label(root, 14, Vector2(-120, -28), Control.PRESET_BOTTOM_RIGHT)
+	ver_label.text = "v%s" % Game.GAME_VERSION
+	ver_label.modulate = Color(1, 1, 1, 0.55)
 	ammo_label = _label(root, 24, Vector2(-300, -120), Control.PRESET_BOTTOM_RIGHT)
 	ammo_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	ammo_label.size = Vector2(280, 80)
+	controls_hint = _label(root, 15, Vector2.ZERO)
+	_anchor(controls_hint, 0.5, 1.0, -420, -52, 840, 36)
+	controls_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	controls_hint.add_theme_color_override("font_color", Color(0.85, 0.9, 1.0, 0.92))
+	controls_hint.autowrap_mode = TextServer.AUTOWRAP_OFF
 
 	cross = preload("res://scripts/crosshair.gd").new()
 	root.add_child(cross)
@@ -192,6 +219,25 @@ func _build_pause(root: Control) -> void:
 	sens_slider.value_changed.connect(func(v): Game.mouse_sensitivity = v)
 	box.add_child(sens_slider)
 	Game.build_control_options(box)
+	var crow := HBoxContainer.new()
+	box.add_child(crow)
+	var cl := Label.new()
+	cl.text = "Class (applies next respawn / if full HP):"
+	crow.add_child(cl)
+	var cls_opt := OptionButton.new()
+	for i in TrooperClass.NAMES.size():
+		cls_opt.add_item(TrooperClass.NAMES[i])
+	cls_opt.selected = Game.trooper_cls()
+	cls_opt.item_selected.connect(func(i):
+		Game.save["cls"] = i
+		Game.write_save()
+		var lp2 = world.local_player() if world else null
+		if lp2 != null and lp2.state == 0 and lp2.health >= lp2.max_health * 0.95:
+			lp2.apply_class(i)
+		elif lp2 != null:
+			lp2.cls = i
+	)
+	crow.add_child(cls_opt)
 	_button(box, "Resume", _resume)
 	_button(box, "Leave Mission", func(): Game.write_save(); Game.return_to_menu(""))
 	pause_panel.visible = false
@@ -434,13 +480,40 @@ func _process(delta: float) -> void:
 
 	if lp == null:
 		return
-	health_bar.max_value = lp.max_health
-	health_bar.value = lp.health
-	health_label.text = "HEALTH %d / %d" % [int(lp.health), int(lp.max_health)]
+	var hp_key := Vector2i(int(lp.health), int(lp.max_health))
+	if _hud_cache.get("hp") != hp_key:
+		_hud_cache["hp"] = hp_key
+		health_bar.max_value = lp.max_health
+		health_bar.value = lp.health
+		health_label.text = "HEALTH %d / %d" % [int(lp.health), int(lp.max_health)]
+	# Vehicle hull bar
+	if lp.in_mech >= 0 and lp.in_mech < world.mech_hp.size():
+		var mi: int = lp.in_mech
+		var vkey := Vector2i(int(world.mech_hp[mi]), int(world.mech_max_hp[mi]))
+		if _hud_cache.get("veh") != vkey:
+			_hud_cache["veh"] = vkey
+			veh_bar.visible = true
+			veh_label.visible = true
+			veh_bar.max_value = world.mech_max_hp[mi]
+			veh_bar.value = world.mech_hp[mi]
+			veh_label.text = "%s HULL  %d / %d" % [world.vehicle_name(mi), int(world.mech_hp[mi]), int(world.mech_max_hp[mi])]
+	else:
+		veh_bar.visible = false
+		veh_label.visible = false
+		_hud_cache.erase("veh")
+	var wname := str(Game.class_weapon(lp.weapon).get("name", "BLASTER"))
 	var ammo := "%d / %d" % [lp.mag, lp.mag_size]
 	if lp.reloading > 0.0:
 		ammo = "RELOADING..."
-	ammo_label.text = "%s  [%d/2]\n%s\nGrenades: %d" % [lp.WEAPON_NAMES[lp.weapon], lp.weapon + 1, ammo, lp.grenades]
+	var akey := "%s|%s|%d|%s" % [wname, ammo, lp.grenades, lp.cls]
+	if _hud_cache.get("ammo") != akey:
+		_hud_cache["ammo"] = akey
+		var heat := ""
+		if lp.in_mech >= 0 and lp.veh_heat > 0.05:
+			heat = "\nHEAT %d%%" % int(lp.veh_heat * 100.0)
+		ammo_label.text = "%s  [%d/2]\n%s\nGrenades: %d%s" % [wname, lp.weapon + 1, ammo, lp.grenades, heat]
+
+	_update_controls_hint(lp)
 
 	if lp.state == 1:
 		down_label.text = "YOU ARE DOWN\nBleeding out in %ds - a squadmate can revive you" % int(ceil(lp.bleed))
@@ -519,3 +592,91 @@ func _fps_tick() -> void:
 	_f3_was = f3
 	if _fps_label.visible:
 		_fps_label.text = "%d FPS" % Engine.get_frames_per_second()
+
+
+
+## Compact live control-key strip — dirty-checked, class/context aware.
+func _update_controls_hint(lp) -> void:
+	if controls_hint == null or lp == null:
+		return
+	if lp.state != 0 or end_panel.visible:
+		if controls_hint.visible:
+			controls_hint.visible = false
+			_hud_cache.erase("ctrl")
+		return
+	controls_hint.visible = true
+	var parts: Array = []
+	# Context overrides first
+	var near_revive = lp.revive_target != null
+	var near_veh := -1
+	if lp.in_mech < 0 and world != null:
+		near_veh = world.mech_near(lp.global_position)
+	if lp.in_mech >= 0:
+		parts.append("[LMB] Fire")
+		if lp.veh_vtype == 2:
+			var scd: int = int(ceil(lp.veh_shell_cd))
+			parts.append("[G] Shell READY" if scd <= 0 else "[G] Shell %ds" % scd)
+		parts.append("[E] Exit")
+		parts.append("[V] View")
+		parts.append("[Shift] Boost")
+	elif near_revive:
+		parts.append("[Hold E] Revive")
+		parts.append(_weapon_swap_pill(lp))
+		parts.append(_class_action_pill(lp))
+	elif near_veh >= 0:
+		parts.append("[E] Board %s" % world.vehicle_name(near_veh))
+		parts.append(_weapon_swap_pill(lp))
+		parts.append(_class_action_pill(lp))
+	else:
+		parts.append(_weapon_swap_pill(lp))
+		parts.append(_class_action_pill(lp))
+		if lp.is_crouching:
+			parts.append("[C/Z] Stand")
+		else:
+			parts.append("[C/Z] Crouch")
+			if lp.cls == 0:
+				parts.append("[Sprint+C] Slide")
+		if lp.grenades > 0:
+			parts.append("[G] Grenade (%d)" % lp.grenades)
+		else:
+			parts.append("[G] Grenade (0)")
+		parts.append("[V] 1st/3rd")
+		parts.append("[B] Emote")
+	var text := "   ".join(parts)
+	# Dirty key: text + cooldown seconds buckets
+	var cmd_s: int = int(ceil(lp.cmd_cd)) if lp.cls == 3 else 0
+	var shell_s: int = int(ceil(lp.veh_shell_cd)) if lp.in_mech >= 0 and lp.veh_vtype == 2 else 0
+	var key := "%s|%d|%d|%d|%d|%d|%d" % [text, lp.cls, lp.weapon, lp.grenades, int(lp.is_crouching), cmd_s, shell_s]
+	key += "|%d|%d" % [lp.in_mech, near_veh]
+	key += "|1" if near_revive else "|0"
+	if _hud_cache.get("ctrl") == key:
+		return
+	_hud_cache["ctrl"] = key
+	controls_hint.text = text
+
+
+func _weapon_swap_pill(lp) -> String:
+	var other: int = 1 - lp.weapon
+	var w: Dictionary = Game.class_weapon(other)
+	# Prefer explicit slot keys; [3] cycles
+	var short: String = str(w.get("name", "Weapon")).split(" ")[0]
+	return "[%d/%d] %s" % [other + 1, 3, short]
+
+
+func _class_action_pill(lp) -> String:
+	match lp.cls:
+		1:  # Heavy
+			var k: String = str(Game.class_weapon(lp.weapon).get("kind", ""))
+			if k == "z6":
+				return "[Hold LMB] Spin-Up"
+			return "[LMB] Splash"
+		2:  # Sniper
+			if str(Game.class_weapon(lp.weapon).get("kind", "")) == "sniper":
+				return "[RMB] 2.8x Scope"
+			return "[RMB] Aim"
+		3:  # Officer
+			if lp.cmd_cd <= 0.0:
+				return "[X] Battle Cmd READY"
+			return "[X] Cmd %ds" % int(ceil(lp.cmd_cd))
+		_:
+			return "[RMB] Aim"

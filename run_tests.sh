@@ -14,7 +14,10 @@ $G --headless --path . -- --test=weapons | grep "\[test\]"
 $G --headless --path . -- --test=hitbox | grep "\[test\]"
 $G --headless --path . -- --test=camview | grep "\[test\]"
 $G --headless --path . -- --test=mech | grep "\[test\]"
-for m in 0 1 2; do $G --headless --path . -- --test=mapcheck$m | grep "\[test\] \(OK\|FAIL\|mapcheck\)"; done
+$G --headless --path . -- --test=walls | grep "\[test\]"
+$G --headless --path . -- --test=classes | grep "\[test\]"
+$G --headless --path . -- --test=antitank | grep "\[test\]"
+for m in 0 1 2 3 4 5; do $G --headless --path . -- --test=mapcheck$m | grep "\[test\] \(OK\|FAIL\|mapcheck\)"; done
 $G --headless --path . -- --test=smokefail | grep "\[test\]"
 $G --headless --path . -- --test=server > /tmp/ds_server.log 2>&1 &
 sleep 2
@@ -51,3 +54,9 @@ sleep 2
 $G --headless --path . -- --test=pvp_client | grep "\[test\]"
 sleep 8
 grep -a "\[test\]" /tmp/ds_pvp_server.log
+# bidirectional PvP kill attribution (client kills host AND host kills client)
+$G --headless --path . -- --test=pvp_bidir_server > /tmp/ds_pvp_bidir_server.log 2>&1 &
+sleep 2
+$G --headless --path . -- --test=pvp_bidir_client | grep "\[test\]"
+sleep 12
+grep -a "\[test\]" /tmp/ds_pvp_bidir_server.log

@@ -20,6 +20,12 @@ func build(builder, m: Dictionary) -> void:
 			_felucia()
 		"kamino":
 			_kamino()
+		"umbara":
+			_umbara()
+		"christophsis":
+			_christophsis()
+		"mustafar":
+			_mustafar()
 		_:
 			_geonosis()
 	for i in M["posts"].size():
@@ -109,7 +115,7 @@ func _geonosis() -> void:
 		for k in 4:
 			var side := -1.0 if k % 2 == 0 else 1.0
 			var sp: Vector3 = m[0] + Vector3(side * (m[1].x / 2.0 + 0.5), 0, r.randf_range(-m[1].z / 2.5, m[1].z / 2.5))
-			B.prop("rock_large", sp, r.randf() * TAU, r.randf_range(3.0, 5.5), "none", tint)
+			B.prop("rock_large", sp, r.randf() * TAU, r.randf_range(3.0, 5.5), "box", tint)
 	# ramps up onto each mesa (south end of west mesas, north end of east mesas)
 	B.ramp(Vector3(-24, 0, 21), Vector3(-24, 5, 10.0), 5.0, rock)
 	B.ramp(Vector3(-24, 0, -71), Vector3(-24, 5, -60.0), 5.0, rock)
@@ -378,3 +384,97 @@ func _add_rain() -> void:
 	p.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	B.deco.add_child(p)
 	rain = p
+
+
+# ======================================================================= UMBARA
+func _umbara() -> void:
+	var rock: Color = M["rock"]
+	var cliff: Color = M["cliff"]
+	B.ground(240.0, M["ground"], M["ground"].lightened(0.05))
+	for i in 20:
+		var t := float(i) / 20.0 * TAU
+		var p := Vector3(clampf(cos(t) * 130.0, -98, 98), 0, clampf(sin(t) * 130.0, -98, 98))
+		B.prop("mountain_group", p, t, r.randf_range(14, 22), "none", Color(0.5, 0.4, 0.8))
+	B.box(Vector3(0, 0.05, 0), Vector3(14, 0.1, 140), Color(0.12, 0.12, 0.18), Vector3.ZERO, false, false)
+	for z in range(-60, 61, 12):
+		B.light(Vector3(-6.5, 0.4, float(z)), Color(0.3, 1.0, 0.95), 1.4, 8.0)
+		B.light(Vector3(6.5, 0.4, float(z)), Color(1.0, 0.3, 0.85), 1.4, 8.0)
+		B.prop("light_floor", Vector3(-6.5, 0, float(z)), 0.0, 1.4, "none")
+		B.prop("light_floor", Vector3(6.5, 0, float(z)), 0.0, 1.4, "none")
+	for side in [-1.0, 1.0]:
+		B.box(Vector3(side * 22, 0.6, -10), Vector3(3.5, 1.2, 50), cliff, Vector3.ZERO, true, true)
+		B.prop("sack_trench", Vector3(side * 18, 0, -30), PI / 2.0, 1.0, "box")
+		B.prop("sack_trench", Vector3(side * 18, 0, 10), PI / 2.0, 1.0, "box")
+		B.bunker(Vector3(side * 40, 0, -20), PI / 2.0 * side, Color(0.25, 0.22, 0.35))
+	B.box(Vector3(0, 3, -5), Vector3(8, 6, 8), cliff, Vector3.ZERO, true, true)
+	B.box(Vector3(0, 6.05, -5), Vector3(9, 0.2, 9), cliff, Vector3.ZERO, true, true)  # ATC deck
+	B.ramp(Vector3(-12, 0, -5), Vector3(-4.5, 6.05, -5), 5.0, rock)
+	B.ramp(Vector3(12, 0, -5), Vector3(4.5, 6.05, -5), 5.0, rock)
+	B.prop("antenna", Vector3(0, 6.2, -5), 0.0, 3.2, "none")
+	B.prop("container_structure", Vector3(-35, 0, 30), 0.4, 4.0, "box", Color(0.6, 0.5, 0.9))
+	B.prop("container_structure", Vector3(38, 0, 28), -0.3, 4.0, "box", Color(0.6, 0.5, 0.9))
+	for i in 8:
+		B.prop("plant", Vector3(r.randf_range(-70, 70), 0, r.randf_range(-70, 70)), r.randf() * TAU, r.randf_range(2.0, 4.0), "none", Color(0.4, 1.2, 1.0))
+	_scatter("crate", 18, Rect2(-70, -70, 140, 140), 1.0, 1.3, "box", Color.WHITE, [])
+	_scatter("rock_large", 8, Rect2(-80, -80, 160, 160), 2.0, 3.5, "box", Color(0.4, 0.3, 0.6), [])
+
+
+# ======================================================================= CHRISTOPHSIS
+func _christophsis() -> void:
+	var rock: Color = M["rock"]
+	var cliff: Color = M["cliff"]
+	B.ground(240.0, M["ground"], M["ground"].darkened(0.1))
+	for i in 16:
+		var t := float(i) / 16.0 * TAU
+		var p := Vector3(clampf(cos(t) * 125.0, -96, 96), 0, clampf(sin(t) * 125.0, -96, 96))
+		B.prop("mountain_group", p, t, r.randf_range(12, 20), "none", Color(0.5, 0.85, 1.0))
+	for c in [Vector3(-25, 0, -15), Vector3(30, 0, -35), Vector3(-40, 0, 40), Vector3(20, 0, 25), Vector3(0, 0, -50), Vector3(50, 0, 10)]:
+		B.cyl(c + Vector3(0, 6, 0), 1.2, 0.6, 12.0, Color(0.3, 0.85, 0.95), true)
+		B.light(c + Vector3(0, 8, 0), Color(0.4, 1.0, 1.0), 1.0, 14.0)
+	B.box(Vector3(0, 1.25, 0), Vector3(70, 2.5, 10), cliff, Vector3.ZERO, true, true)  # solid bridge body
+	B.box(Vector3(0, 2.6, 0), Vector3(72, 0.25, 12), cliff, Vector3.ZERO, true, true)  # walkable deck
+	B.ramp(Vector3(-42, 0, 0), Vector3(-32, 2.6, 0), 6.0, rock)
+	B.ramp(Vector3(42, 0, 0), Vector3(32, 2.6, 0), 6.0, rock)
+	B.ramp(Vector3(0, 0, -22), Vector3(0, 2.6, -12), 6.0, rock)
+	B.ramp(Vector3(0, 0, 22), Vector3(0, 2.6, 12), 6.0, rock)
+	for p in [Vector3(-20, 2.6, 4), Vector3(20, 2.6, -4), Vector3(0, 2.6, 0)]:
+		B.prop("sack_trench", p, 0.0, 1.0, "box")
+	B.bunker(Vector3(-50, 0, -10), 0.0, Color(0.4, 0.55, 0.65))
+	B.bunker(Vector3(50, 0, 15), PI, Color(0.4, 0.55, 0.65))
+	B.prop("scifi_wall", Vector3(-15, 0, 35), 0.2, 2.0, "box", Color(0.6, 0.9, 1.0))
+	B.prop("scifi_wall", Vector3(18, 0, -40), -0.3, 2.0, "box", Color(0.6, 0.9, 1.0))
+	_scatter("crate", 14, Rect2(-75, -75, 150, 150), 1.0, 1.2, "box")
+	_scatter("rock_large", 6, Rect2(-85, -85, 170, 170), 2.0, 3.5, "box", Color(0.4, 0.7, 0.8), [])
+
+
+# ======================================================================= MUSTAFAR
+func _mustafar() -> void:
+	var rock: Color = M["rock"]
+	var cliff: Color = M["cliff"]
+	B.ground(240.0, M["ground"], M["ground"].lightened(0.08))
+	for i in 18:
+		var t := float(i) / 18.0 * TAU
+		var p := Vector3(clampf(cos(t) * 128.0, -97, 97), 0, clampf(sin(t) * 128.0, -97, 97))
+		B.prop("mountain_group", p, t, r.randf_range(14, 24), "none", Color(0.9, 0.4, 0.2))
+	for lz in [[Vector3(0, -0.2, 5), Vector3(120, 0.3, 10)], [Vector3(-30, -0.2, -40), Vector3(10, 0.3, 80)], [Vector3(35, -0.2, 30), Vector3(10, 0.3, 70)]]:
+		B.box(lz[0], lz[1], Color(1.0, 0.35, 0.08), Vector3.ZERO, false, false)
+		B.light(lz[0] + Vector3(0, 2, 0), Color(1.0, 0.4, 0.1), 1.6, 18.0)
+	B.box(Vector3(0, 0.5, 5), Vector3(12, 1.0, 14), cliff, Vector3.ZERO, true, true)
+	B.box(Vector3(-30, 0.5, -10), Vector3(14, 1.0, 12), cliff, Vector3.ZERO, true, true)
+	B.box(Vector3(35, 0.5, 10), Vector3(14, 1.0, 12), cliff, Vector3.ZERO, true, true)
+	B.box(Vector3(0, 0.5, -35), Vector3(50, 1.0, 8), cliff, Vector3.ZERO, true, true)
+	B.ramp(Vector3(0, 0, 22), Vector3(0, 1.0, 12), 6.0, rock)
+	B.ramp(Vector3(0, 0, -52), Vector3(0, 1.0, -40), 6.0, rock)
+	B.ramp(Vector3(-40, 0, -10), Vector3(-34, 1.0, -10), 5.0, rock)
+	B.ramp(Vector3(45, 0, 10), Vector3(39, 1.0, 10), 5.0, rock)
+	B.box(Vector3(0, 3, -8), Vector3(10, 6, 10), cliff, Vector3.ZERO, true, true)
+	B.prop("pipes", Vector3(-8, 0, -8), 0.0, 1.2, "box")
+	B.prop("pipes", Vector3(8, 0, -8), PI / 2.0, 1.2, "box")
+	B.prop("antenna", Vector3(0, 6, -8), 0.0, 2.5, "none")
+	for p in [Vector3(-20, 0, 25), Vector3(25, 0, -25), Vector3(-40, 0, 5)]:
+		B.prop("scifi_wall", p, r.randf_range(-0.2, 0.2), 2.2, "box", Color(0.5, 0.3, 0.2))
+	B.bunker(Vector3(50, 0, -15), -PI / 2.0, Color(0.35, 0.2, 0.15))
+	B.bunker(Vector3(-55, 0, 20), PI / 2.0, Color(0.35, 0.2, 0.15))
+	_scatter("barrel", 16, Rect2(-70, -70, 140, 140), 1.1, 1.3, "cyl", Color.WHITE, [], 0.45)
+	_scatter("crate", 12, Rect2(-70, -70, 140, 140), 1.0, 1.2, "box")
+	_scatter("rock_large", 8, Rect2(-85, -85, 170, 170), 2.0, 3.8, "box", Color(0.4, 0.2, 0.12), [])
