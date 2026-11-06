@@ -263,6 +263,10 @@ func _setup_input() -> void:
 	_bind("crouch_toggle", [KEY_Z])
 	_bind("battle_cmd", [KEY_X])
 	_bind("emote", [KEY_B])
+	_bind("emote1", [KEY_5])
+	_bind("emote2", [KEY_6])
+	_bind("emote3", [KEY_7])
+	_bind("emote4", [KEY_8])
 	_bind("fire", [], MOUSE_BUTTON_LEFT)
 	_bind("aim", [], MOUSE_BUTTON_RIGHT)
 
@@ -283,7 +287,7 @@ func _bind(action: String, keys: Array, mouse_button: int = 0) -> void:
 # ---------------------------------------------------------------- save / upgrades
 func default_save() -> Dictionary:
 	return {"credits": 0, "dmg": 0, "rate": 0, "mag": 0, "armor": 0, "grenades": 2,
-		"missions": 0, "wins": 0, "name": "Trooper", "sens": 0.0025, "map": 0, "diff": 1, "controls": 0, "turn_speed": 2.6, "auto_fire": false, "aim_assist": true, "ws_url": "", "relay_url": "", "relay_pref": 0, "mode": 0, "quality": -1, "fp": false, "cls": 0}
+		"missions": 0, "wins": 0, "name": "Trooper", "sens": 0.0025, "map": 0, "diff": 1, "controls": 0, "turn_speed": 2.6, "auto_fire": false, "aim_assist": true, "ws_url": "", "relay_url": "", "relay_pref": 0, "mode": 0, "quality": -1, "fp": false, "cls": 0, "xp": 0}
 
 
 func load_save() -> void:
@@ -299,6 +303,7 @@ func load_save() -> void:
 	for k in ["credits", "dmg", "rate", "mag", "armor", "grenades", "missions", "wins"]:
 		save[k] = int(save[k])
 	save["grenades"] = maxi(2, int(save["grenades"]))   # grenade tier (old saves may have been drained)
+	save["xp"] = maxi(int(save.get("xp", 0)), int(save.get("credits", 0)))
 	player_name = str(save["name"])
 	settings = {"map": int(save["map"]), "diff": int(save["diff"]), "mode": int(save["mode"])}
 	mouse_sensitivity = float(save["sens"])
@@ -393,6 +398,147 @@ func class_speed_mult() -> float:
 	return float(class_def().get("speed", 1.0))
 
 
+const RANK_XP := [0, 200, 500, 900, 1500, 2300, 3300, 4600, 6200, 8200]
+var _rank_icons := {}
+
+
+func add_credits(amount: int) -> void:
+	if amount <= 0:
+		return
+	save["credits"] = int(save.get("credits", 0)) + amount
+	save["xp"] = int(save.get("xp", 0)) + amount
+	write_save()
+
+
+func rank_for_xp(xp: int) -> int:
+	var r := 0
+	for i in RANK_XP.size():
+		if xp >= int(RANK_XP[i]):
+			r = i
+	return r
+
+
+func local_rank() -> int:
+	return rank_for_xp(int(save.get("xp", 0)))
+
+
+func peer_rank(pid: int) -> int:
+	if players.has(pid) and players[pid].has("rank"):
+		return clampi(int(players[pid]["rank"]), 0, RANK_XP.size() - 1)
+	if pid == multiplayer.get_unique_id():
+		return local_rank()
+	return 0
+
+
+func xp_progress() -> Dictionary:
+	var xp := int(save.get("xp", 0))
+	var r := rank_for_xp(xp)
+	var cur := int(RANK_XP[r])
+	var nxt := int(RANK_XP[mini(r + 1, RANK_XP.size() - 1)])
+	var frac := 1.0 if r >= RANK_XP.size() - 1 else clampf(float(xp - cur) / float(maxi(nxt - cur, 1)), 0.0, 1.0)
+	return {"rank": r, "xp": xp, "cur_floor": cur, "next_ceil": nxt, "frac": frac}
+
+
+## Procedural 24x24 military rank badge (icon only — no text titles).
+func rank_icon(rank: int) -> ImageTexture:
+	rank = clampi(rank, 0, 9)
+	if _rank_icons.has(rank):
+		return _rank_icons[rank]
+	var img := Image.create(24, 24, false, Image.FORMAT_RGBA8)
+	img.fill(Color(0, 0, 0, 0))
+	var plate := Color(0.12, 0.14, 0.18, 0.95)
+	var edge := Color(0.55, 0.58, 0.62, 1.0)
+	var mark := Color(0.85, 0.88, 0.92, 1.0)
+	if rank >= 7:
+		mark = Color(1.0, 0.85, 0.25, 1.0)
+	elif rank >= 5:
+		mark = Color(0.75, 0.82, 0.95, 1.0)
+	elif rank >= 9:
+		mark = Color(1.0, 0.45, 0.2, 1.0)
+	if rank >= 9:
+		mark = Color(1.0, 0.55, 0.15, 1.0)
+	# plate + border
+	for y in range(2, 22):
+		for x in range(2, 22):
+			var border := x == 2 or x == 21 or y == 2 or y == 21
+			img.set_pixel(x, y, edge if border else plate)
+	# draw chevrons / pips by rank
+	var draw_chev := func(cy: int, col: Color):
+		for i in 7:
+			var x0 := 12 - i
+			var x1 := 12 + i
+			var yy := cy + i
+			if yy < 22:
+				if x0 >= 3: img.set_pixel(x0, yy, col)
+				if x1 <= 20: img.set_pixel(x1, yy, col)
+				if x0 + 1 >= 3 and x0 + 1 <= 20: img.set_pixel(x0 + 1, yy, col)
+				if x1 - 1 >= 3: img.set_pixel(x1 - 1, yy, col)
+	var draw_rocker := func(cy: int, col: Color):
+		for i in 8:
+			var x0 := 5 + i
+			var yy := cy + int((i - 3.5) * (i - 3.5) * 0.15)
+			if x0 <= 18 and yy >= 3 and yy <= 20:
+				img.set_pixel(x0, yy, col)
+				img.set_pixel(x0, yy + 1, col)
+	var draw_diamond := func(cx: int, cy: int, col: Color):
+		for dy in range(-3, 4):
+			for dx in range(-3, 4):
+				if abs(dx) + abs(dy) <= 3:
+					var xx := cx + dx
+					var yy := cy + dy
+					if xx >= 3 and xx <= 20 and yy >= 3 and yy <= 20:
+						img.set_pixel(xx, yy, col)
+	var draw_star := func(cx: int, cy: int, col: Color):
+		for a in 5:
+			var ang := -PI / 2.0 + a * TAU / 5.0
+			for s in range(0, 5):
+				var xx := cx + int(cos(ang) * s * 0.7)
+				var yy := cy + int(sin(ang) * s * 0.7)
+				if xx >= 3 and xx <= 20 and yy >= 3 and yy <= 20:
+					img.set_pixel(xx, yy, col)
+		img.set_pixel(cx, cy, col)
+	match rank:
+		0:
+			img.set_pixel(12, 12, mark)
+			img.set_pixel(11, 12, mark)
+			img.set_pixel(13, 12, mark)
+		1:
+			draw_chev.call(8, mark)
+		2:
+			draw_chev.call(6, mark)
+			draw_chev.call(10, mark)
+		3:
+			draw_chev.call(5, mark)
+			draw_chev.call(8, mark)
+			draw_chev.call(11, mark)
+		4:
+			draw_chev.call(5, mark)
+			draw_chev.call(8, mark)
+			draw_chev.call(11, mark)
+			draw_rocker.call(16, mark)
+		5:
+			draw_chev.call(6, mark)
+			draw_chev.call(9, mark)
+			draw_rocker.call(14, mark)
+			draw_rocker.call(17, mark)
+		6:
+			draw_diamond.call(12, 11, mark)
+		7:
+			draw_star.call(12, 11, mark)
+		8:
+			draw_star.call(8, 11, mark)
+			draw_star.call(16, 11, mark)
+		9:
+			draw_star.call(12, 8, mark)
+			draw_diamond.call(12, 15, Color(1.0, 0.35, 0.15, 1.0))
+			draw_rocker.call(18, mark)
+	var tex := ImageTexture.create_from_image(img)
+	_rank_icons[rank] = tex
+	return tex
+
+
+
+
 # ---------------------------------------------------------------- sounds (generated tones)
 func _make_sounds() -> void:
 	sounds = {
@@ -461,7 +607,7 @@ func host_game(port: int) -> String:
 		return "Could not host on port %d (error %d). Is it already in use?" % [port, err]
 	multiplayer.multiplayer_peer = peer
 	online = true
-	players = {1: {"name": player_name}}
+	players = {1: {"name": player_name, "rank": local_rank(), "cls": trooper_cls()}}
 	lobby_changed.emit()
 	return ""
 
@@ -611,7 +757,7 @@ func _on_room_ready(code: String, peer) -> void:
 	room_code = code
 	multiplayer.multiplayer_peer = peer
 	online = true
-	players = {1: {"name": player_name}}
+	players = {1: {"name": player_name, "rank": local_rank(), "cls": trooper_cls()}}
 	print("[relay] hosting room ", code, " backup=" , _relay_using_backup)
 	var tag := " (Backup)" if _relay_using_backup else ""
 	net_status.emit("Room code: %s%s  -  tell your squad to type it in Join with Code." % [code, tag])
@@ -727,7 +873,7 @@ func leave_network() -> void:
 
 func start_singleplayer() -> void:
 	leave_network()
-	players = {1: {"name": player_name}}
+	players = {1: {"name": player_name, "rank": local_rank(), "cls": trooper_cls()}}
 	if is_versus_mode(int(settings.get("mode", 0))):
 		settings["mode"] = 0   # versus needs other players; solo falls back to co-op
 	start_mission()
@@ -850,7 +996,7 @@ func _on_peer_disconnected(id: int) -> void:
 
 func _on_connected() -> void:
 	net_status.emit("Connected! Waiting for the host to start the mission...")
-	rpc_id(1, "register_player", player_name)
+	rpc_id(1, "register_player", player_name, local_rank(), trooper_cls())
 
 
 func _on_connection_failed() -> void:
@@ -869,14 +1015,14 @@ func _broadcast_lobby() -> void:
 
 
 @rpc("any_peer", "call_remote", "reliable")
-func register_player(pname: String) -> void:
+func register_player(pname: String, prank: int = 0, pcls: int = 0) -> void:
 	if not multiplayer.is_server():
 		return
 	var id := multiplayer.get_remote_sender_id()
 	var clean := pname.strip_edges().substr(0, 16)
 	if clean == "":
 		clean = "Trooper %d" % (players.size() + 1)
-	players[id] = {"name": clean}
+	players[id] = {"name": clean, "rank": clampi(prank, 0, 9), "cls": TrooperClass.clamp_id(pcls)}
 	if in_mission:
 		players[id]["team"] = _team_for_new_player()
 	_broadcast_lobby()

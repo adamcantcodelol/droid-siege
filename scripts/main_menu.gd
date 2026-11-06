@@ -12,6 +12,7 @@ var code_edit: LineEdit
 var mode_opt: OptionButton
 var relay_edit: LineEdit
 var lobby_label: Label
+var lobby_list: VBoxContainer
 var lobby_info: Label
 var start_btn: Button
 var credits_label: Label
@@ -132,11 +133,43 @@ func _show(which: String) -> void:
 func _build_main(holder: Control) -> Control:
 	var box := _panel(holder)
 	_lbl(box, "Trooper name:")
+	var nrow := HBoxContainer.new()
+	nrow.add_theme_constant_override("separation", 8)
+	box.add_child(nrow)
+	var rank_tex := TextureRect.new()
+	rank_tex.name = "RankTex"
+	rank_tex.custom_minimum_size = Vector2(28, 28)
+	rank_tex.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	rank_tex.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	rank_tex.texture = Game.rank_icon(Game.local_rank())
+	nrow.add_child(rank_tex)
 	name_edit = LineEdit.new()
+	name_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	name_edit.text = Game.player_name
 	name_edit.max_length = 16
 	name_edit.text_changed.connect(func(t): Game.player_name = t if t.strip_edges() != "" else "Trooper")
-	box.add_child(name_edit)
+	nrow.add_child(name_edit)
+	var xp := Game.xp_progress()
+	var xp_row := HBoxContainer.new()
+	box.add_child(xp_row)
+	var xp_bar := ProgressBar.new()
+	xp_bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	xp_bar.custom_minimum_size = Vector2(0, 14)
+	xp_bar.max_value = 1.0
+	xp_bar.show_percentage = false
+	xp_bar.value = float(xp["frac"])
+	var xfill := StyleBoxFlat.new()
+	xfill.bg_color = Color(0.35, 0.7, 1.0)
+	xp_bar.add_theme_stylebox_override("fill", xfill)
+	xp_row.add_child(xp_bar)
+	var xp_lbl := Label.new()
+	xp_lbl.name = "XpLabel"
+	if int(xp["rank"]) >= 9:
+		xp_lbl.text = "XP %d  MAX" % int(xp["xp"])
+	else:
+		xp_lbl.text = "XP %d / %d" % [int(xp["xp"]), int(xp["next_ceil"])]
+	xp_lbl.add_theme_font_size_override("font_size", 13)
+	xp_row.add_child(xp_lbl)
 	var row := HBoxContainer.new()
 	box.add_child(row)
 	var map_opt := OptionButton.new()
@@ -287,6 +320,10 @@ func _build_lobby(holder: Control) -> Control:
 	var box := _panel(holder)
 	_lbl(box, "SQUAD LOBBY", 22)
 	lobby_label = _lbl(box, "")
+	lobby_list = VBoxContainer.new()
+	lobby_list.add_theme_constant_override("separation", 4)
+	box.add_child(lobby_list)
+	lobby_label.visible = false
 	lobby_info = _lbl(box, "", 13)
 	var mrow := HBoxContainer.new()
 	box.add_child(mrow)
@@ -405,16 +442,42 @@ func _on_status(msg: String) -> void:
 
 
 func _refresh_lobby() -> void:
-	if lobby_label == null:
+	if lobby_label == null and lobby_list == null:
 		return
-	var t := ""
-	var keys := Game.players.keys()
-	keys.sort()
-	for k in keys:
-		t += "- %s%s\n" % [Game.players[k]["name"], "  (host)" if k == 1 else ""]
-	if t == "":
-		t = "(connecting...)" if Game.online or Game._pending_relay != null else "(not connected)"
-	lobby_label.text = "Troopers (%d/4):\n%s" % [Game.players.size(), t]
+	if lobby_list != null:
+		for c in lobby_list.get_children():
+			c.queue_free()
+		var title := Label.new()
+		title.text = "Troopers (%d/4):" % Game.players.size()
+		title.add_theme_font_size_override("font_size", 16)
+		lobby_list.add_child(title)
+		var keys := Game.players.keys()
+		keys.sort()
+		if keys.is_empty():
+			var empty := Label.new()
+			empty.text = "(connecting...)" if Game.online or Game._pending_relay != null else "(not connected)"
+			lobby_list.add_child(empty)
+		for k in keys:
+			var row := HBoxContainer.new()
+			var ic := TextureRect.new()
+			ic.custom_minimum_size = Vector2(20, 20)
+			ic.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+			ic.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+			ic.texture = Game.rank_icon(Game.peer_rank(int(k)))
+			row.add_child(ic)
+			var lb := Label.new()
+			lb.text = "%s%s" % [Game.players[k]["name"], "  (host)" if k == 1 else ""]
+			row.add_child(lb)
+			lobby_list.add_child(row)
+	else:
+		var t := ""
+		var keys2 := Game.players.keys()
+		keys2.sort()
+		for k in keys2:
+			t += "- %s%s\n" % [Game.players[k]["name"], "  (host)" if k == 1 else ""]
+		if t == "":
+			t = "(connecting...)" if Game.online or Game._pending_relay != null else "(not connected)"
+		lobby_label.text = "Troopers (%d/4):\n%s" % [Game.players.size(), t]
 	var is_host: bool = Game.online and multiplayer.is_server()
 	start_btn.visible = is_host or (Game.server_is_dedicated and Game.online)
 	mode_opt.get_parent().visible = start_btn.visible

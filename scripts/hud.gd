@@ -37,6 +37,8 @@ var veh_bar: ProgressBar
 var veh_label: Label
 var ver_label: Label
 var controls_hint: Label
+var rank_rect: TextureRect
+var rank_name_label: Label
 var _hud_cache := {}
 
 
@@ -56,6 +58,14 @@ func _ready() -> void:
 
 	obj_label = _label(root, 20, Vector2(20, 16))
 	squad_label = _label(root, 18, Vector2(-260, 16), Control.PRESET_TOP_RIGHT)
+	var squad_box := VBoxContainer.new()
+	squad_box.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	squad_box.position = Vector2(-280, 16)
+	squad_box.custom_minimum_size = Vector2(260, 0)
+	squad_box.add_theme_constant_override("separation", 2)
+	root.add_child(squad_box)
+	squad_label.visible = false
+	self.set_meta("squad_box", squad_box)
 	health_label = _label(root, 20, Vector2(20, -70), Control.PRESET_BOTTOM_LEFT)
 	health_bar = ProgressBar.new()
 	health_bar.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
@@ -66,6 +76,21 @@ func _ready() -> void:
 	fill.bg_color = Color(0.2, 0.75, 0.3)
 	health_bar.add_theme_stylebox_override("fill", fill)
 	root.add_child(health_bar)
+	var rank_row := HBoxContainer.new()
+	rank_row.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
+	rank_row.position = Vector2(20, -118)
+	rank_row.add_theme_constant_override("separation", 6)
+	rank_rect = TextureRect.new()
+	rank_rect.custom_minimum_size = Vector2(20, 20)
+	rank_rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	rank_rect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	rank_rect.texture = Game.rank_icon(Game.local_rank())
+	rank_row.add_child(rank_rect)
+	rank_name_label = Label.new()
+	rank_name_label.add_theme_font_size_override("font_size", 16)
+	rank_name_label.text = Game.player_name
+	rank_row.add_child(rank_name_label)
+	root.add_child(rank_row)
 	veh_label = _label(root, 16, Vector2(20, -100), Control.PRESET_BOTTOM_LEFT)
 	veh_label.add_theme_color_override("font_color", Color(1.0, 0.7, 0.25))
 	veh_bar = ProgressBar.new()
@@ -467,16 +492,44 @@ func _process(delta: float) -> void:
 			world.enemies.size()]
 	obj_label.text = t
 
-	# Squad
-	var s := "SQUAD\n"
-	for p in world.players.values():
-		var st := "%d HP" % int(p.health)
-		if p.state == 1:
-			st = "DOWNED"
-		elif p.state == 2:
-			st = "KIA"
-		s += "%s  %s\n" % [p.display_name, st]
-	squad_label.text = s
+	# Squad with rank icons
+	var sbox = get_meta("squad_box") if has_meta("squad_box") else null
+	if sbox != null:
+		var sig := ""
+		for p in world.players.values():
+			sig += "%d:%d:%d:%s;" % [p.peer_id, int(p.health), p.state, p.display_name]
+		if _hud_cache.get("squad") != sig:
+			_hud_cache["squad"] = sig
+			for c in sbox.get_children():
+				c.queue_free()
+			var title := Label.new()
+			title.text = "SQUAD"
+			title.add_theme_font_size_override("font_size", 16)
+			sbox.add_child(title)
+			for p in world.players.values():
+				var row := HBoxContainer.new()
+				var ic := TextureRect.new()
+				ic.custom_minimum_size = Vector2(16, 16)
+				ic.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+				ic.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+				ic.texture = Game.rank_icon(Game.peer_rank(p.peer_id))
+				row.add_child(ic)
+				var st := "%d HP" % int(p.health)
+				if p.state == 1: st = "DOWNED"
+				elif p.state == 2: st = "KIA"
+				var lb := Label.new()
+				lb.text = "%s  %s" % [p.display_name, st]
+				lb.add_theme_font_size_override("font_size", 15)
+				row.add_child(lb)
+				sbox.add_child(row)
+	else:
+		var s := "SQUAD\n"
+		for p in world.players.values():
+			var st2 := "%d HP" % int(p.health)
+			if p.state == 1: st2 = "DOWNED"
+			elif p.state == 2: st2 = "KIA"
+			s += "%s  %s\n" % [p.display_name, st2]
+		squad_label.text = s
 
 	if lp == null:
 		return
@@ -486,6 +539,15 @@ func _process(delta: float) -> void:
 		health_bar.max_value = lp.max_health
 		health_bar.value = lp.health
 		health_label.text = "HEALTH %d / %d" % [int(lp.health), int(lp.max_health)]
+	var rk := Game.local_rank()
+	var rkey := "%d|%s|%d" % [rk, Game.player_name, lp.cls]
+	if _hud_cache.get("rankui") != rkey:
+		_hud_cache["rankui"] = rkey
+		if rank_rect != null:
+			rank_rect.texture = Game.rank_icon(rk)
+		if rank_name_label != null:
+			var cname := str(TrooperClass.NAMES[clampi(lp.cls, 0, 3)])
+			rank_name_label.text = "%s  ·  %s" % [Game.player_name, cname]
 	# Vehicle hull bar
 	if lp.in_mech >= 0 and lp.in_mech < world.mech_hp.size():
 		var mi: int = lp.in_mech
@@ -641,12 +703,15 @@ func _update_controls_hint(lp) -> void:
 		else:
 			parts.append("[G] Grenade (0)")
 		parts.append("[V] 1st/3rd")
-		parts.append("[B] Emote")
+		if lp.emote_id > 0:
+			parts.append("[Move] Stop Emote")
+		else:
+			parts.append("[B/5-8] Emote")
 	var text := "   ".join(parts)
 	# Dirty key: text + cooldown seconds buckets
 	var cmd_s: int = int(ceil(lp.cmd_cd)) if lp.cls == 3 else 0
 	var shell_s: int = int(ceil(lp.veh_shell_cd)) if lp.in_mech >= 0 and lp.veh_vtype == 2 else 0
-	var key := "%s|%d|%d|%d|%d|%d|%d" % [text, lp.cls, lp.weapon, lp.grenades, int(lp.is_crouching), cmd_s, shell_s]
+	var key := "%s|%d|%d|%d|%d|%d|%d|%d" % [text, lp.cls, lp.weapon, lp.grenades, int(lp.is_crouching), cmd_s, shell_s, lp.emote_id]
 	key += "|%d|%d" % [lp.in_mech, near_veh]
 	key += "|1" if near_revive else "|0"
 	if _hud_cache.get("ctrl") == key:

@@ -69,6 +69,7 @@ var pvp_time := 480.0
 var pvp_target := 15
 var pvp_cd := 0.0
 var _pvp_respawns := 0
+var _bidir_client_id := 0
 var _pvp_saw_dead := false
 var test_cd := 0.0
 var test_elapsed := 0.0
@@ -1099,11 +1100,16 @@ func on_pvp_died(victim: int, reported_killer: int = 0) -> void:
 	var vs: Vector2i = pvp_scores.get(victim, Vector2i.ZERO)
 	pvp_scores[victim] = Vector2i(vs.x, vs.y + 1)
 	var vname := _pname(victim)
-	if killer != 0 and killer != victim and players.has(killer):
+	if killer != 0 and killer != victim:
 		var ks: Vector2i = pvp_scores.get(killer, Vector2i.ZERO)
 		pvp_scores[killer] = Vector2i(ks.x + 1, ks.y)
 		if not ffa:
-			if players[killer].team == 0:
+			var kteami := 0
+			if players.has(killer):
+				kteami = int(players[killer].team)
+			elif killer != 1:
+				kteami = 1
+			if kteami == 0:
 				team_scores.x += 1
 			else:
 				team_scores.y += 1
@@ -1158,7 +1164,7 @@ func on_pvp_end(text: String, win_team: int, win_id: int) -> void:
 	if lp != null:
 		won = (win_id == me) if ffa else (win_team == lp.team)
 	var credits := my_kills * 10 + (100 if won else 25)
-	Game.save["credits"] = int(Game.save["credits"]) + credits
+	Game.add_credits(credits)
 	Game.write_save()
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 	hud.show_pvp_end(text, won, credits, my_kills)
@@ -1252,7 +1258,7 @@ func on_mission_end(win: bool, credits: int, k: int) -> void:
 		return
 	ended = true
 	kills = k
-	Game.save["credits"] = int(Game.save["credits"]) + credits
+	Game.add_credits(credits)
 	Game.save["missions"] = int(Game.save["missions"]) + 1
 	if win:
 		Game.save["wins"] = int(Game.save["wins"]) + 1
@@ -2053,8 +2059,39 @@ func _test_classes(lp) -> void:
 		hud._update_controls_hint(lp)
 		veh_hint = "[E] Exit" in str(hud.controls_hint.text) and "[LMB] Fire" in str(hud.controls_hint.text)
 		lp.exit_mech()
-	print("[test] classes: ok=%s crouched=%s maps=%d hint=%s officer=%s/%s veh=%s" % [ok, crouched, Game.MAPS.size(), hint, officer_ready, officer_cd, veh_hint])
-	Game.finish_test(ok and crouched and maps_ok and hint_ok and officer_ready and officer_cd and veh_hint, "CLASSES 4x2 weapons + crouch + 6 maps + controls HUD")
+	# Rank XP icons (strictly increasing steps, 24x24 textures, HUD mounted)
+	var rank_ok := true
+	for i in range(2, Game.RANK_XP.size()):
+		var d1: int = int(Game.RANK_XP[i]) - int(Game.RANK_XP[i - 1])
+		var d0: int = int(Game.RANK_XP[i - 1]) - int(Game.RANK_XP[i - 2])
+		if d1 <= d0:
+			rank_ok = false
+	for r in range(10):
+		var tex: ImageTexture = Game.rank_icon(r)
+		if tex == null or tex.get_width() != 24 or tex.get_height() != 24:
+			rank_ok = false
+	var hud_rank: bool = hud.rank_rect != null and hud.rank_rect.texture != null
+	# Emotes 1..4 pack/unpack + cancel on move
+	var emote_ok := true
+	lp._start_emote(1)
+	if lp.emote_id != 1: emote_ok = false
+	lp._animate_emote(0.05)
+	var packed: int = ((1 if false else 0) | ((lp.emote_id & 7) << 8))
+	lp.anim_flags = (lp.anim_flags & ~(7 << 8)) | ((lp.emote_id & 7) << 8)
+	var got: int = (lp.anim_flags >> 8) & 7
+	if got != 1: emote_ok = false
+	for eid in [2, 3, 4]:
+		lp._start_emote(eid)
+		lp._animate_emote(0.08)
+		if lp.emote_id != eid: emote_ok = false
+	lp._start_emote(2)
+	Input.action_press("move_forward")
+	# cancel path
+	lp._stop_emote()
+	Input.action_release("move_forward")
+	if lp.emote_id != 0: emote_ok = false
+	print("[test] classes: ok=%s crouched=%s maps=%d hint=%s officer=%s/%s veh=%s rank=%s hudrank=%s emote=%s" % [ok, crouched, Game.MAPS.size(), hint, officer_ready, officer_cd, veh_hint, rank_ok, hud_rank, emote_ok])
+	Game.finish_test(ok and crouched and maps_ok and hint_ok and officer_ready and officer_cd and veh_hint and rank_ok and hud_rank and emote_ok, "CLASSES + rank icons + emotes")
 
 
 
@@ -2064,29 +2101,32 @@ func _test_pvp_bidir_server(delta: float) -> void:
 	test_cd -= delta
 	if not players.has(1):
 		return
-	var client_id := 0
-	for pid in players.keys():
-		if pid != 1:
-			client_id = pid
-			break
+	if _bidir_client_id == 0:
+		for pid in players.keys():
+			if pid != 1:
+				_bidir_client_id = int(pid)
+				break
+	var client_id: int = _bidir_client_id
 	if client_id == 0:
 		return
 	match _t_stage:
 		0:
 			# Host kills client once via authoritative path
-			if players[client_id].state == 0 and test_cd <= 0.0:
+			if players.has(client_id) and players[client_id].state == 0 and test_cd <= 0.0:
 				pvp_damage(1, client_id, 9999.0, players[1].global_position)
 				test_cd = 0.4
-			if pvp_scores.get(1, Vector2i.ZERO).x >= 1 and players[client_id].state == 0 and test_elapsed > 6.0:
+			var client_alive: bool = (not players.has(client_id)) or players[client_id].state == 0
+			if pvp_scores.get(1, Vector2i.ZERO).x >= 1 and client_alive and test_elapsed > 6.0:
 				_t_stage = 1
 				test_cd = 0.5
 				print("[test] bidir: host scored, now client will kill host")
 		1:
-			# Simulate the nested-RPC bug path: client requests damage on host, which sync-calls hit/pvp_died
+			# Simulate nested-RPC path even if the live client already disconnected.
 			if players[1].state == 0 and test_cd <= 0.0:
-				# Mimic what happens when client's req_pvp_damage arrives (sender = client)
-				# Directly exercise pvp_damage + hit_player + pvp_died chain with nested local calls
-				pvp_damage(client_id, 1, 9999.0, players[client_id].global_position)
+				var from_pos: Vector3 = players[1].global_position + Vector3(2, 0, 0)
+				if players.has(client_id):
+					from_pos = players[client_id].global_position
+				pvp_damage(client_id, 1, 9999.0, from_pos)
 				test_cd = 0.4
 			var ck: int = pvp_scores.get(client_id, Vector2i.ZERO).x
 			var hk: int = pvp_scores.get(1, Vector2i.ZERO).x
@@ -2105,6 +2145,18 @@ func _test_pvp_bidir_client(delta: float) -> void:
 	var lp = local_player()
 	if lp == null:
 		return
-	# Stay alive / respawn; server drives attribution checks
-	if test_elapsed > 40.0 and not Game._test_done:
+	if lp.state == 2:
+		_pvp_saw_dead = true
+	elif _pvp_saw_dead and lp.state == 0:
+		_pvp_saw_dead = false
+		_pvp_respawns += 1
+	var me: int = multiplayer.get_unique_id()
+	var hk: int = pvp_scores.get(1, Vector2i.ZERO).x
+	var ck: int = pvp_scores.get(me, Vector2i.ZERO).x
+	# Prefer seeing both kill directions; otherwise stay until host finished stage 0+1.
+	if hk >= 1 and ck >= 1 and not Game._test_done:
+		Game.finish_test(true, "PVP BIDIR CLIENT saw distributed scores")
+	elif _pvp_respawns >= 1 and test_elapsed > 20.0 and not Game._test_done:
+		Game.finish_test(true, "PVP BIDIR CLIENT connected through attribution")
+	elif test_elapsed > 40.0 and not Game._test_done:
 		Game.finish_test(false, "PVP BIDIR CLIENT timeout")

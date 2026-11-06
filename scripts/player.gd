@@ -116,6 +116,13 @@ func _ready() -> void:
 			name_label.modulate = Color(1, 0.35, 0.3) if team == 0 else Color(0.45, 0.65, 1.0)
 		name_label.position = Vector3(0, 2.3, 0)
 		add_child(name_label)
+		rank_sprite = Sprite3D.new()
+		rank_sprite.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+		rank_sprite.no_depth_test = true
+		rank_sprite.pixel_size = 0.012
+		rank_sprite.position = Vector3(-0.7, 2.3, 0)
+		rank_sprite.texture = Game.rank_icon(Game.peer_rank(peer_id))
+		add_child(rank_sprite)
 
 
 func _part(mesh: Mesh, pos: Vector3, color: Color, parent: Node3D) -> MeshInstance3D:
@@ -171,6 +178,11 @@ var veh_heat := 0.0
 var veh_shell_cd := 0.0
 var _last_attacker_id := 0
 var _pvp_dead_sent := false
+var emote_id := 0            # 0 none, 1 Floss, 2 Take the L, 3 Orange Justice, 4 Hit the Griddy
+var emote_t := 0.0
+var _emote_cycle := 0
+var rank_sprite: Sprite3D = null
+var _fp_saved_for_emote := false
 
 
 func _build_model() -> void:
@@ -461,6 +473,29 @@ func _physics_process(delta: float) -> void:
 		if Input.is_action_just_pressed("battle_cmd"):
 			_try_battle_command()
 
+
+	# Emotes
+	if act and in_mech < 0 and state == 0:
+		if Input.is_action_just_pressed("emote"):
+			_emote_cycle = (_emote_cycle % 4) + 1
+			_start_emote(_emote_cycle)
+		elif Input.is_action_just_pressed("emote1"):
+			_start_emote(1)
+		elif Input.is_action_just_pressed("emote2"):
+			_start_emote(2)
+		elif Input.is_action_just_pressed("emote3"):
+			_start_emote(3)
+		elif Input.is_action_just_pressed("emote4"):
+			_start_emote(4)
+	if emote_id > 0:
+		var moving := input.length() > 0.1
+		if moving or Input.is_action_pressed("jump") or Input.is_action_pressed("crouch") or Input.is_action_just_pressed("crouch_toggle") \
+				or want_fire or Input.is_action_pressed("aim") or Input.is_action_just_pressed("grenade") or in_mech >= 0:
+			_stop_emote()
+		else:
+			emote_t += delta
+			_animate_emote(delta)
+
 	# Health + officer aura regen
 	cmd_cd = maxf(0.0, cmd_cd - delta)
 	cmd_buff_t = maxf(0.0, cmd_buff_t - delta)
@@ -485,7 +520,7 @@ func _physics_process(delta: float) -> void:
 	sync_cd -= delta
 	if sync_cd <= 0.0:
 		sync_cd = 0.066  # 15 Hz player state (was 20 Hz)
-		anim_flags = (1 if shot_t > 0.0 else 0) | (2 if is_aiming else 0) | (4 if is_sprinting else 0) | (8 if not is_on_floor() else 0) | (weapon << 4) | (64 if in_mech >= 0 else 0) | (128 if is_crouching else 0)
+		anim_flags = (1 if shot_t > 0.0 else 0) | (2 if is_aiming else 0) | (4 if is_sprinting else 0) | (8 if not is_on_floor() else 0) | (weapon << 4) | (64 if in_mech >= 0 else 0) | (128 if is_crouching else 0) | ((emote_id & 7) << 8)
 		Game.net_all("player_state", [position, rotation.y, pitch, health, state | (anim_flags << 2)], false)
 
 
@@ -793,6 +828,12 @@ func _update_pose(delta: float) -> void:
 			MechVisual.animate_type(mech_vis, veh_vtype, _mech_t, clampf(hv / maxf(spd0, 0.1), 0.0, 1.0), turn)
 			MechVisual.flash_type(mech_vis, veh_vtype, shot_t > 0.22)
 	_update_anim(delta)
+	if emote_id > 0 and not is_local:
+		emote_t += delta
+		_animate_emote(delta)
+	elif not is_local and emote_id == 0 and emote_t != 0.0:
+		emote_t = 0.0
+		_reset_emote_bones()
 	if name_label != null:
 		name_label.text = display_name + ("  [DOWNED - hold E]" if state == 1 else ("  [KIA]" if state == 2 else ""))
 
@@ -1095,6 +1136,7 @@ func net_update(pos: Vector3, ry: float, p: float, hp: float, st: int) -> void:
 	state = st & 3
 	anim_flags = st >> 2
 	is_crouching = (anim_flags & 128) != 0
+	emote_id = (anim_flags >> 8) & 7
 
 
 
@@ -1121,3 +1163,113 @@ func apply_class(new_cls: int) -> void:
 	mag_size = Game.mag_size(weapon) if is_local else int(TrooperClass.weapon(cls, weapon).get("mag", 24))
 	mag = mini(mag, mag_size)
 	stored_mag = [Game.mag_size(0), Game.mag_size(1)] if is_local else stored_mag
+
+
+
+func _start_emote(eid: int) -> void:
+	if state != 0 or in_mech >= 0:
+		return
+	emote_id = clampi(eid, 1, 4)
+	emote_t = 0.0
+	velocity.x = 0.0
+	velocity.z = 0.0
+	is_sprinting = false
+	# Watch yourself dance in 3rd person
+	if first_person:
+		_fp_saved_for_emote = true
+		set_first_person(false)
+	else:
+		_fp_saved_for_emote = false
+
+
+func _stop_emote() -> void:
+	if emote_id == 0:
+		return
+	emote_id = 0
+	emote_t = 0.0
+	_reset_emote_bones()
+	if _fp_saved_for_emote:
+		_fp_saved_for_emote = false
+		set_first_person(true)
+
+
+func _emote_skeleton() -> Skeleton3D:
+	if _skel != null:
+		return _skel
+	if char_model == null:
+		return null
+	var sks: Array = char_model.find_children("*", "Skeleton3D", true, false)
+	return sks[0] if sks.size() > 0 else null
+
+
+func _reset_emote_bones() -> void:
+	var sk := _emote_skeleton()
+	if sk != null:
+		sk.reset_bone_poses()
+	if model != null:
+		model.position.y = 0.0
+		model.rotation = Vector3.ZERO
+
+
+func _bone_rot(sk: Skeleton3D, name: String, eulers: Vector3) -> void:
+	var idx := sk.find_bone(name)
+	if idx < 0:
+		return
+	sk.set_bone_pose_rotation(idx, Quaternion.from_euler(eulers))
+
+
+## Cringy Fortnite-style dances via bone pose + root bounce.
+func _animate_emote(delta: float) -> void:
+	var sk := _emote_skeleton()
+	if sk == null:
+		return
+	var t := emote_t
+	match emote_id:
+		1:  # The Floss — hip sway + arms swinging across body
+			model.rotation.y = sin(t * 14.0) * 0.35
+			model.position.y = absf(sin(t * 14.0)) * 0.04
+			_bone_rot(sk, "Hips", Vector3(0, sin(t * 14.0) * 0.5, 0))
+			_bone_rot(sk, "UpperArm.L", Vector3(0.2, 0, -1.2 + sin(t * 14.0) * 1.4))
+			_bone_rot(sk, "UpperArm.R", Vector3(0.2, 0, 1.2 + sin(t * 14.0) * 1.4))
+			_bone_rot(sk, "LowerArm.L", Vector3(0.4, 0, 0))
+			_bone_rot(sk, "LowerArm.R", Vector3(0.4, 0, 0))
+		2:  # Take the L — hand on forehead, other on hip, side kicks
+			model.position.y = absf(sin(t * 8.0)) * 0.06
+			_bone_rot(sk, "UpperArm.R", Vector3(-2.2, 0.3, 0.6))
+			_bone_rot(sk, "LowerArm.R", Vector3(-1.5, 0, 0))
+			_bone_rot(sk, "UpperArm.L", Vector3(0.3, 0, 1.1))
+			_bone_rot(sk, "LowerArm.L", Vector3(1.0, 0, 0))
+			var kick := absf(sin(t * 8.0))
+			_bone_rot(sk, "UpperLeg.L", Vector3(-kick * 1.1, 0, 0.2))
+			_bone_rot(sk, "LowerLeg.L", Vector3(kick * 0.8, 0, 0))
+			_bone_rot(sk, "UpperLeg.R", Vector3(-kick * 0.3, 0, -0.15))
+		3:  # Orange Justice — bouncy knees + wild arm pumps
+			model.position.y = absf(sin(t * 10.0)) * 0.1
+			model.rotation.y = sin(t * 5.0) * 0.15
+			_bone_rot(sk, "UpperLeg.L", Vector3(-0.5 + sin(t * 10.0) * 0.4, 0, 0.15))
+			_bone_rot(sk, "UpperLeg.R", Vector3(-0.5 + cos(t * 10.0) * 0.4, 0, -0.15))
+			_bone_rot(sk, "UpperArm.L", Vector3(-1.0 + sin(t * 12.0) * 1.2, 0, -0.8))
+			_bone_rot(sk, "UpperArm.R", Vector3(-1.0 + cos(t * 12.0) * 1.2, 0, 0.8))
+			_bone_rot(sk, "LowerArm.L", Vector3(sin(t * 12.0) * 1.0, 0, 0))
+			_bone_rot(sk, "LowerArm.R", Vector3(cos(t * 12.0) * 1.0, 0, 0))
+			_bone_rot(sk, "Torso", Vector3(sin(t * 10.0) * 0.2, 0, 0))
+		4:  # Hit the Griddy — heel-toe bounce + goggle hands
+			model.position.y = absf(sin(t * 12.0)) * 0.08
+			model.rotation.y = sin(t * 6.0) * 0.25
+			_bone_rot(sk, "UpperLeg.L", Vector3(-0.3 + sin(t * 12.0) * 0.5, 0, 0))
+			_bone_rot(sk, "UpperLeg.R", Vector3(-0.3 + cos(t * 12.0) * 0.5, 0, 0))
+			_bone_rot(sk, "Hips", Vector3(0, sin(t * 12.0) * 0.25, 0))
+			# Arms swing low then snap to eyes
+			var gog := 1.0 if fmod(t, 1.0) > 0.55 else 0.0
+			_bone_rot(sk, "UpperArm.L", Vector3(lerpf(0.4, -2.0, gog), 0, lerpf(-0.6, -0.9, gog)))
+			_bone_rot(sk, "UpperArm.R", Vector3(lerpf(0.4, -2.0, gog), 0, lerpf(0.6, 0.9, gog)))
+			_bone_rot(sk, "LowerArm.L", Vector3(lerpf(0.2, -1.2, gog), 0, 0))
+			_bone_rot(sk, "LowerArm.R", Vector3(lerpf(0.2, -1.2, gog), 0, 0))
+	# Keep char_model from overwriting with locomotion while emoting
+	if char_model != null:
+		char_model.play("idle")
+
+
+func refresh_rank_sprite() -> void:
+	if rank_sprite != null:
+		rank_sprite.texture = Game.rank_icon(Game.peer_rank(peer_id))
