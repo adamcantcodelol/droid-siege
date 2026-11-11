@@ -7,6 +7,13 @@ var B   # MapBuilder
 var M: Dictionary
 var r := RandomNumberGenerator.new()
 var rain: Node3D = null
+var rooms_keep: Array = []     # building centres: scatter keeps props out of them
+
+
+## Enterable building + keep scattered props out of it.
+func _room(c: Vector3, yaw: float, color: Color, accent: Color, w := 14.0, d := 10.0) -> void:
+	B.building(c, yaw, w, d, color, accent)
+	rooms_keep.append(c)
 
 
 func build(builder, m: Dictionary) -> void:
@@ -55,6 +62,9 @@ func _scatter(model: String, n: int, rect: Rect2, hmin: float, hmax: float, coll
 		if not _clear(p):
 			continue
 		var bad := false
+		for rm in rooms_keep:
+			if Vector2(p.x - rm.x, p.z - rm.z).length() < 11.0:
+				bad = true
 		for k in keep:
 			if Vector2(p.x - k[0].x, p.z - k[0].z).length() < k[1]:
 				bad = true
@@ -128,6 +138,9 @@ func _geonosis() -> void:
 	B.rock_arch(Vector3(-8, 0, 12), Vector3(8, 0, 12), 7.0, rock, tint)
 	B.rock_arch(Vector3(-36, 0, -8), Vector3(-52, 0, -8), 8.0, rock, tint)
 	B.rock_arch(Vector3(36, 0, -42), Vector3(52, 0, -42), 8.0, rock, tint)
+	# --- v1.2: enterable buildings (two-room outposts)
+	_room(Vector3(-62, 0, -30), 0.0, Color(0.62, 0.52, 0.42), Color(0.75, 0.3, 0.15))
+	_room(Vector3(56, 0, 45), PI / 2.0, Color(0.62, 0.52, 0.42), Color(0.75, 0.3, 0.15))
 	# --- bunkers
 	B.bunker(Vector3(-12, 0, -44), 0.0, Color(0.55, 0.5, 0.45))
 	B.bunker(Vector3(12, 0, -44), 0.0, Color(0.55, 0.5, 0.45))
@@ -203,6 +216,9 @@ func _felucia() -> void:
 		B.cyl(tp + Vector3(sx, 3, 7), 0.9, 0.8, 6.0, stone.lightened(0.1), true, 8)
 	B.cyl(tp + Vector3(0, 6, -4), 1.2, 0.6, 7.0, stone.lightened(0.15), true, 6)   # obelisk
 	B.light(tp + Vector3(0, 13.5, -4), Color(0.6, 1.0, 0.4), 2.0, 18.0)
+	# --- v1.2: overgrown ruin buildings you can enter
+	_room(Vector3(-72, 0, 55), 0.3, stone, Color(0.35, 0.7, 0.4))
+	_room(Vector3(70, 0, -25), -0.2, stone, Color(0.35, 0.7, 0.4))
 	# --- broken walls + colonnades (cover lanes)
 	var walls := [
 		[Vector3(-30, 0, -20), 12.0, 0.2], [Vector3(-38, 0, 10), 10.0, 1.4], [Vector3(25, 0, -20), 14.0, -0.3],
@@ -319,6 +335,9 @@ func _kamino() -> void:
 		B.box(Vector3(sx * 0.6, 3.5, -0.2), Vector3(14, 1.0, 0.2), Color(0.3, 0.32, 0.36))
 	B.prop("antenna", Vector3(0, 3.0, -5), 0.0, 3.0, "none")
 	B.light(Vector3(0, 6.5, -5), Color(0.6, 0.85, 1.0), 1.6, 16.0)
+	# --- v1.2: Kaminoan control rooms (enterable)
+	_room(Vector3(-30, 0, -75), 0.0, white, Color(0.4, 0.75, 1.0))
+	_room(Vector3(40, 0, 75), PI, white, Color(0.4, 0.75, 1.0))
 	# --- cargo yards (cover)
 	var yards := [Vector3(-55, 0, -10), Vector3(55, 0, 10), Vector3(-25, 0, 55), Vector3(30, 0, -60)]
 	for yi in yards.size():
@@ -406,6 +425,8 @@ func _umbara() -> void:
 		B.prop("sack_trench", Vector3(side * 18, 0, -30), PI / 2.0, 1.0, "box")
 		B.prop("sack_trench", Vector3(side * 18, 0, 10), PI / 2.0, 1.0, "box")
 		B.bunker(Vector3(side * 40, 0, -20), PI / 2.0 * side, Color(0.25, 0.22, 0.35))
+	_room(Vector3(-50, 0, 60), 0.0, Color(0.22, 0.2, 0.3), Color(0.3, 1.0, 0.95))
+	_room(Vector3(55, 0, -65), PI / 2.0, Color(0.22, 0.2, 0.3), Color(1.0, 0.3, 0.85))
 	B.box(Vector3(0, 3, -5), Vector3(8, 6, 8), cliff, Vector3.ZERO, true, true)
 	B.box(Vector3(0, 6.05, -5), Vector3(9, 0.2, 9), cliff, Vector3.ZERO, true, true)  # ATC deck
 	B.ramp(Vector3(-12, 0, -5), Vector3(-4.5, 6.05, -5), 5.0, rock)
@@ -439,6 +460,8 @@ func _christophsis() -> void:
 	B.ramp(Vector3(0, 0, 22), Vector3(0, 2.6, 12), 6.0, rock)
 	for p in [Vector3(-20, 2.6, 4), Vector3(20, 2.6, -4), Vector3(0, 2.6, 0)]:
 		B.prop("sack_trench", p, 0.0, 1.0, "box")
+	_room(Vector3(-60, 0, 65), 0.0, Color(0.55, 0.62, 0.7), Color(0.3, 0.9, 1.0))
+	_room(Vector3(30, 0, -70), 0.0, Color(0.55, 0.62, 0.7), Color(0.3, 0.9, 1.0))
 	B.bunker(Vector3(-50, 0, -10), 0.0, Color(0.4, 0.55, 0.65))
 	B.bunker(Vector3(50, 0, 15), PI, Color(0.4, 0.55, 0.65))
 	B.prop("scifi_wall", Vector3(-15, 0, 35), 0.2, 2.0, "box", Color(0.6, 0.9, 1.0))
@@ -456,9 +479,21 @@ func _mustafar() -> void:
 		var t := float(i) / 18.0 * TAU
 		var p := Vector3(clampf(cos(t) * 128.0, -97, 97), 0, clampf(sin(t) * 128.0, -97, 97))
 		B.prop("mountain_group", p, t, r.randf_range(14, 24), "none", Color(0.9, 0.4, 0.2))
-	for lz in [[Vector3(0, -0.2, 5), Vector3(120, 0.3, 10)], [Vector3(-30, -0.2, -40), Vector3(10, 0.3, 80)], [Vector3(35, -0.2, 30), Vector3(10, 0.3, 70)]]:
-		B.box(lz[0], lz[1], Color(1.0, 0.35, 0.08), Vector3.ZERO, false, false)
-		B.light(lz[0] + Vector3(0, 2, 0), Color(1.0, 0.4, 0.1), 1.6, 18.0)
+	# --- v1.2: flowing lava. A river splits the map east-west, fed by two lava falls; two side
+	# channels branch off it. Cross on the raised platforms or the metal bridges. Lava burns troopers.
+	B.lava_river(Vector2(0, 5), Vector2(186, 8), Vector2(1, 0))
+	B.lava_river(Vector2(-62, -44), Vector2(8, 92), Vector2(0, 1))
+	B.lava_river(Vector2(35, 32), Vector2(8, 54), Vector2(0, -1))
+	B.lava_fall(Vector3(-62, 0, -91.5), 8.0, 18.0, 0.0)
+	B.lava_fall(Vector3(93.5, 0, 5), 8.0, 16.0, -PI / 2.0)
+	for br in [Vector2(-75, 5), Vector2(-40, 5), Vector2(70, 5)]:
+		B.lava_bridge(br, Vector2(6, 11), Color(0.3, 0.28, 0.27))
+	B.lava_bridge(Vector2(-62, -40), Vector2(11, 6), Color(0.3, 0.28, 0.27))
+	B.lava_bridge(Vector2(35, 45), Vector2(11, 6), Color(0.3, 0.28, 0.27))
+	for lp in [Vector3(-40, 2, 5), Vector3(-62, 2, -60), Vector3(35, 2, 40)]:
+		B.light(lp, Color(1.0, 0.4, 0.1), 1.6, 18.0)
+	_room(Vector3(-75, 0, 40), 0.0, Color(0.28, 0.2, 0.17), Color(1.0, 0.45, 0.1))
+	_room(Vector3(65, 0, -50), PI / 2.0, Color(0.28, 0.2, 0.17), Color(1.0, 0.45, 0.1))
 	B.box(Vector3(0, 0.5, 5), Vector3(12, 1.0, 14), cliff, Vector3.ZERO, true, true)
 	B.box(Vector3(-30, 0.5, -10), Vector3(14, 1.0, 12), cliff, Vector3.ZERO, true, true)
 	B.box(Vector3(35, 0.5, 10), Vector3(14, 1.0, 12), cliff, Vector3.ZERO, true, true)

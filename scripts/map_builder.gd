@@ -12,6 +12,9 @@ var _batches := {}     # key -> {"parts": Array, "xforms": Array}
 var _mats := {}
 var spawn_points: Array = []   # droid entry points (server picks from these)
 var occluders := 0
+var rooms: Array = []          # interior centres of enterable buildings (mapcheck reachability)
+var lava_rects: Array = []     # Rect2 (x, z) of burning lava
+var safe_rects: Array = []     # Rect2 bridges over lava
 var sun: DirectionalLight3D
 var env: Environment
 const SMALL := ["plant", "crate", "barrel", "light_floor", "sack_trench", "rock"]
@@ -278,6 +281,173 @@ func merge_static() -> int:
 		deco.add_child(out)
 		n += 1
 	return n
+
+
+# ------------------------------------------------------------------ v1.2: buildings + lava
+## Enterable two-room building: front door, back door, an interior doorway, windows on the
+## sides and a roof. Local -Z is the front. Walls are ordinary boxes (they stop bullets and
+## blasts like every other wall, and get merged into a few draw calls).
+func building(c: Vector3, yaw: float, w: float, d: float, color: Color, accent: Color) -> void:
+	var bs := Basis(Vector3.UP, yaw)
+	var h := 3.4
+	var t := 0.4
+	var rot := Vector3(0, yaw, 0)
+	var put := func(local: Vector3, size: Vector3, col: Color) -> void:
+		box(c + bs * local, size, col, rot)
+	# front (door centred) and back (door offset) walls, along local X
+	for wall in [[-d / 2.0, -w / 4.0], [d / 2.0, w / 4.0]]:
+		var z: float = wall[0]
+		var door: float = wall[1]
+		var dw := 2.6
+		var left_len: float = (door - dw / 2.0) - (-w / 2.0)
+		var right_len: float = (w / 2.0) - (door + dw / 2.0)
+		put.call(Vector3(-w / 2.0 + left_len / 2.0, h / 2.0, z), Vector3(left_len, h, t), color)
+		put.call(Vector3(w / 2.0 - right_len / 2.0, h / 2.0, z), Vector3(right_len, h, t), color)
+		put.call(Vector3(door, (h + 2.7) / 2.0, z), Vector3(dw, h - 2.7, t), color)        # lintel
+		put.call(Vector3(door, 2.85, z - signf(z) * 0.25), Vector3(dw + 0.6, 0.15, 0.3), accent)  # door frame
+	# side walls along local Z with a window opening (sill 1.1 m, top 2.2 m)
+	for sx in [-1.0, 1.0]:
+		var x: float = sx * w / 2.0
+		var ww := 2.0
+		var seg := (d - ww) / 2.0
+		put.call(Vector3(x, h / 2.0, -d / 2.0 + seg / 2.0), Vector3(t, h, seg), color)
+		put.call(Vector3(x, h / 2.0, d / 2.0 - seg / 2.0), Vector3(t, h, seg), color)
+		put.call(Vector3(x, 0.55, 0), Vector3(t, 1.1, ww), color)
+		put.call(Vector3(x, (h + 2.2) / 2.0, 0), Vector3(t, h - 2.2, ww), color)
+	# interior divider (along Z at x = 0) with a doorway
+	var seg2 := (d - 2.4) / 2.0
+	put.call(Vector3(0, h / 2.0, -d / 2.0 + seg2 / 2.0), Vector3(0.3, h, seg2), color.darkened(0.1))
+	put.call(Vector3(0, h / 2.0, d / 2.0 - seg2 / 2.0), Vector3(0.3, h, seg2), color.darkened(0.1))
+	put.call(Vector3(0, (h + 2.7) / 2.0, 0), Vector3(0.3, h - 2.7, 2.4), color.darkened(0.1))
+	# roof with a trim band, plus a lit ceiling panel (emissive, no dynamic light)
+	put.call(Vector3(0, h + 0.2, 0), Vector3(w + 0.6, 0.4, d + 0.6), color.darkened(0.25))
+	put.call(Vector3(0, h + 0.45, 0), Vector3(w * 0.5, 0.15, d * 0.5), accent)
+	for sx in [-1.0, 1.0]:
+		var panel := MeshInstance3D.new()
+		var pm := BoxMesh.new()
+		pm.size = Vector3(1.6, 0.05, 0.8)
+		pm.material = mat(Color(1.0, 0.95, 0.8), 0.5, 1.5)
+		panel.mesh = pm
+		panel.position = c + bs * Vector3(sx * w / 4.0, h - 0.05, 0)
+		panel.rotation = rot
+		panel.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		deco.add_child(panel)
+		# floor tile so interiors read as rooms
+		var fl := MeshInstance3D.new()
+		var fm := BoxMesh.new()
+		fm.size = Vector3(w / 2.0 - 0.5, 0.03, d - 0.5)
+		fm.material = mat(color.darkened(0.45), 0.8)
+		fl.mesh = fm
+		fl.position = c + bs * Vector3(sx * w / 4.0, 0.015, 0)
+		fl.rotation = rot
+		deco.add_child(fl)
+		rooms.append(c + bs * Vector3(sx * w / 4.0, 0, d / 4.0))
+	# furniture: a console with a glowing screen and some crates for cover
+	put.call(Vector3(-w / 4.0, 0.5, d / 2.0 - 0.9), Vector3(2.2, 1.0, 0.7), Color(0.25, 0.26, 0.3))
+	var scr := MeshInstance3D.new()
+	var sm := BoxMesh.new()
+	sm.size = Vector3(1.8, 0.6, 0.05)
+	sm.material = mat(Color(0.3, 0.8, 1.0), 0.4, 2.0)
+	scr.mesh = sm
+	scr.position = c + bs * Vector3(-w / 4.0, 1.35, d / 2.0 - 0.62)
+	scr.rotation = rot
+	deco.add_child(scr)
+	prop("crate", c + bs * Vector3(w / 2.0 - 1.0, 0, -d / 2.0 + 1.0), yaw + 0.3, 1.0, "box")
+	prop("crate", c + bs * Vector3(w / 2.0 - 1.0, 0, d / 2.0 - 1.2), yaw, 1.0, "box")
+
+
+## Animated lava (scrolling procedural shader, unshaded so it glows without lights). Burns troopers.
+static var _lava_shader: Shader
+
+
+static func lava_material(flow: Vector2, size: Vector2) -> ShaderMaterial:
+	if _lava_shader == null:
+		_lava_shader = Shader.new()
+		_lava_shader.code = """shader_type spatial;
+render_mode unshaded, cull_disabled, shadows_disabled;
+uniform vec2 flow = vec2(1.0, 0.0);
+uniform vec2 scale = vec2(10.0, 10.0);
+float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+float noise(vec2 p) {
+	vec2 i = floor(p); vec2 f = fract(p); f = f * f * (3.0 - 2.0 * f);
+	return mix(mix(hash(i), hash(i + vec2(1.0, 0.0)), f.x), mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), f.x), f.y);
+}
+void fragment() {
+	vec2 uv = UV * scale;
+	float n = noise(uv * 0.35 - flow * TIME * 0.35) * 0.6 + noise(uv * 0.9 - flow * TIME * 0.8 + 7.0) * 0.4;
+	float crust = smoothstep(0.5, 0.72, n);
+	vec3 glow = vec3(1.0, 0.82, 0.3) * 1.8;
+	vec3 hot = vec3(1.0, 0.38, 0.05) * 1.4;
+	vec3 dark = vec3(0.16, 0.05, 0.02);
+	ALBEDO = mix(mix(glow, hot, smoothstep(0.2, 0.48, n)), dark, crust);
+}
+"""
+	var m := ShaderMaterial.new()
+	m.shader = _lava_shader
+	m.set_shader_parameter("flow", flow)
+	m.set_shader_parameter("scale", size)
+	return m
+
+
+## A flat lava river: centre (x, z), size (x, z) in metres, flow direction in the XZ plane.
+func lava_river(center: Vector2, size: Vector2, flow: Vector2) -> void:
+	var mi := MeshInstance3D.new()
+	var pm := PlaneMesh.new()
+	pm.size = size
+	pm.material = lava_material(flow, size)
+	mi.mesh = pm
+	mi.position = Vector3(center.x, 0.04, center.y)
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	deco.add_child(mi)
+	# dark basalt banks either side
+	var horizontal := size.x > size.y
+	for s in [-1.0, 1.0]:
+		var bank := MeshInstance3D.new()
+		var bm := BoxMesh.new()
+		bm.size = Vector3(size.x, 0.12, 0.8) if horizontal else Vector3(0.8, 0.12, size.y)
+		bm.material = mat(Color(0.08, 0.05, 0.04), 0.95)
+		bank.mesh = bm
+		bank.position = Vector3(center.x, 0.06, center.y) + (Vector3(0, 0, s * (size.y / 2.0 + 0.4)) if horizontal else Vector3(s * (size.x / 2.0 + 0.4), 0, 0))
+		deco.add_child(bank)
+	lava_rects.append(Rect2(center - size / 2.0, size))
+
+
+## Vertical lava fall (map edge feature) pouring down into a river.
+func lava_fall(base: Vector3, width: float, height: float, yaw: float) -> void:
+	var mi := MeshInstance3D.new()
+	var qm := QuadMesh.new()
+	qm.size = Vector2(width, height)
+	qm.material = lava_material(Vector2(0.0, -1.6), Vector2(width, height))
+	mi.mesh = qm
+	mi.position = base + Vector3(0, height / 2.0, 0)
+	mi.rotation.y = yaw
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	deco.add_child(mi)
+	# rock cliff behind the fall
+	box(base + Basis(Vector3.UP, yaw) * Vector3(0, height / 2.0, -1.5), Vector3(width + 6.0, height + 2.0, 2.5), Color(0.12, 0.08, 0.07), Vector3(0, yaw, 0))
+
+
+## Low metal bridge slab across lava (walkable step, railings), marks a safe rectangle.
+func lava_bridge(center: Vector2, size: Vector2, color: Color) -> void:
+	box(Vector3(center.x, 0.1, center.y), Vector3(size.x, 0.2, size.y), color)
+	var along_x := size.x > size.y
+	for s in [-1.0, 1.0]:
+		var off := Vector3(0, 0.7, s * (size.y / 2.0 - 0.1)) if along_x else Vector3(s * (size.x / 2.0 - 0.1), 0.7, 0)
+		var rs := Vector3(size.x, 0.12, 0.12) if along_x else Vector3(0.12, 0.12, size.y)
+		box(Vector3(center.x, 0, center.y) + off, rs, Color(0.85, 0.55, 0.15))
+	safe_rects.append(Rect2(center - size / 2.0, size))
+
+
+## True if a ground position is in burning lava (not on a bridge).
+func in_lava(p: Vector3) -> bool:
+	var q := Vector2(p.x, p.z)
+	for r in safe_rects:
+		if r.has_point(q):
+			return false
+	for r in lava_rects:
+		if r.has_point(q):
+			return true
+	return false
 
 
 # ------------------------------------------------------------------ composite pieces

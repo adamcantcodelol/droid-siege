@@ -503,7 +503,7 @@ func _tick_vehicles(delta: float) -> void:
 	if multiplayer.is_server() and not versus and not ended and started:
 		_tick_anti_armor_timer(delta)
 	# Lava burn hazard (Mustafar)
-	if multiplayer.is_server() and M.get("layout", "") == "mustafar":
+	if multiplayer.is_server() and builder != null and not builder.lava_rects.is_empty():
 		_tick_lava(delta)
 
 
@@ -637,21 +637,16 @@ func apply_battle_command(src_pid: int, pos: Vector3) -> void:
 
 
 func _tick_lava(delta: float) -> void:
-	# Burn anyone standing near lava channel centers (y near 0, in channel xz)
+	# Burn troopers standing in lava (rects from the map builder; bridges and raised platforms are safe)
 	for p in players.values():
-		if p.state != 0:
+		if p.state != 0 or p.piloting():
 			continue
 		var pos: Vector3 = p.global_position
-		# Channels from maps: wide X or Z bands at low y
-		var in_lava: bool = absf(pos.z - 5.0) < 5.5 and absf(pos.x) < 60.0
-		in_lava = in_lava or (absf(pos.x + 30.0) < 5.5 and absf(pos.z + 10.0) < 40.0)
-		in_lava = in_lava or (absf(pos.x - 35.0) < 5.5 and absf(pos.z - 30.0) < 35.0)
-		# Safe on elevated platforms (y > 0.3)
-		if in_lava and pos.y < 0.35 and not p.piloting():
+		if pos.y < 0.35 and builder.in_lava(pos):
 			if p.is_local:
-				p.take_damage(12.0 * delta, pos, 0)
+				p.take_damage(20.0 * delta, pos, 0)
 			else:
-				Game.net_peer(p.peer_id, "hit_player", [12.0 * delta, pos, 0])
+				Game.net_peer(p.peer_id, "hit_player", [20.0 * delta, pos, 0])
 
 
 func _build_gunship() -> Node3D:
@@ -2079,6 +2074,8 @@ func _test_mapcheck() -> void:
 		starts["droid%d" % i] = droid_spawns[i]
 	for i in POSTS.size():
 		starts["post%d" % i] = POSTS[i] + Vector3(3, 0, 0)
+	for i in builder.rooms.size():
+		starts["room%d" % i] = builder.rooms[i]
 	for key in starts:
 		var p: Vector3 = starts[key]
 		q.transform = Transform3D(Basis(), p + Vector3(0, 1.0, 0))
@@ -2106,8 +2103,11 @@ func _test_mapcheck() -> void:
 				var arr := mesh.surface_get_arrays(si)
 				t += (arr[Mesh.ARRAY_INDEX].size() if arr[Mesh.ARRAY_INDEX] != null else arr[Mesh.ARRAY_VERTEX].size()) / 3
 			tris += t * n.multimesh.instance_count
-	print("[test] mapcheck %s: nav polys=%d, %d start points, %d multimesh batches, %d prop tris, fails=%s" % [M["name"], nav_polys, starts.size(), mm, tris, fails])
-	Game.finish_test(nav_polys > 100 and fails.is_empty(), "MAPCHECK %s" % M["name"])
+	for key in ["LZ", "post0", "post1", "post2", "team0", "team1"]:
+		if starts.has(key) and builder.in_lava(starts[key]):
+			fails.append("%s in lava" % key)
+	print("[test] mapcheck %s: nav polys=%d, %d start points (%d rooms), %d multimesh batches, %d prop tris, lava=%d, fails=%s" % [M["name"], nav_polys, starts.size(), builder.rooms.size(), mm, tris, builder.lava_rects.size(), fails])
+	Game.finish_test(nav_polys > 100 and fails.is_empty() and builder.rooms.size() >= 4, "MAPCHECK %s" % M["name"])
 
 
 ## Weapon slot 2 (scatter blaster) via the real input action: switch, fire at a B2 8 m ahead,
@@ -2184,6 +2184,14 @@ func _bench() -> void:
 		c.global_position = LZ + Vector3(14, 6, -10)
 		c.look_at(LZ + Vector3(0, 2, 0))
 		c.current = true
+		await get_tree().create_timer(0.5).timeout
+	if OS.get_environment("DS_CAM") != "":
+		var v := OS.get_environment("DS_CAM").split_floats(",")
+		var c2 := Camera3D.new()
+		add_child(c2)
+		c2.global_position = Vector3(v[0], v[1], v[2])
+		c2.look_at(Vector3(v[3], v[4], v[5]))
+		c2.current = true
 		await get_tree().create_timer(0.5).timeout
 	if OS.get_environment("DS_SHOT") != "":
 		await Game._save_shot(OS.get_environment("DS_SHOT"))
