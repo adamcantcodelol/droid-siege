@@ -104,6 +104,13 @@ static func _build_barc() -> Node3D:
 	for s in [-1.0, 1.0]:
 		_add(body, _box(Vector3(0.08, 0.25, 0.9)), Vector3(0.42 * s, 0.75, 0.1), red)
 		_add(body, _cyl(0.12, 0.35, 8), Vector3(0.55 * s, 0.55, 0.6), dark, Vector3(0, 0, PI / 2))  # thruster
+	# v1.2 detail: engine glows, handlebars, side fairings, headlamp
+	for s in [-1.0, 1.0]:
+		_add(body, _cyl(0.08, 0.05, 8), Vector3(0.55 * s, 0.55, 0.79), Color(0.45, 0.75, 1.0), Vector3(PI / 2, 0, 0), true)
+		_add(body, _box(Vector3(0.1, 0.3, 1.2)), Vector3(0.32 * s, 0.95, -0.55), hull, Vector3(0, 0.12 * s, 0))
+		_add(body, _box(Vector3(0.35, 0.05, 0.05)), Vector3(0.32 * s, 1.55, -0.9), dark)
+	_add(body, _box(Vector3(0.18, 0.1, 0.05)), Vector3(0, 0.92, -1.55), Color(1.0, 0.95, 0.7), Vector3.ZERO, true)
+	_add(body, _box(Vector3(0.5, 0.06, 1.2)), Vector3(0, 1.04, -0.5), red)
 	var gun := Node3D.new()
 	gun.name = "Gun"
 	gun.position = Vector3(0, 0.7, -1.35)
@@ -137,6 +144,18 @@ static func _build_tank() -> Node3D:
 	for s in [-1.0, 1.0]:
 		_add(body, _box(Vector3(0.35, 0.55, 2.8)), Vector3(1.35 * s, 0.55, 0), dark)
 		_add(body, _box(Vector3(0.25, 0.3, 0.8)), Vector3(1.2 * s, 1.35, -0.4), dark)
+		# v1.2 detail: side sponsons with tapered noses, rear engines, repulsor glow strips
+		_add(body, _box(Vector3(0.6, 0.5, 3.0)), Vector3(1.6 * s, 0.95, 0.3), hull)
+		_add(body, _prism(Vector3(0.6, 0.5, 0.8)), Vector3(1.6 * s, 0.95, -1.6), hull, Vector3(-PI / 2, 0, 0))
+		_add(body, _box(Vector3(0.62, 0.1, 2.0)), Vector3(1.6 * s, 1.15, 0.3), red)
+		_add(body, _cyl(0.28, 0.7, 10), Vector3(0.75 * s, 1.05, 1.95), dark, Vector3(PI / 2, 0, 0))
+		_add(body, _cyl(0.2, 0.05, 10), Vector3(0.75 * s, 1.05, 2.31), Color(0.45, 0.75, 1.0), Vector3(PI / 2, 0, 0), true)
+		_add(body, _box(Vector3(0.12, 0.06, 2.6)), Vector3(1.0 * s, 0.52, 0), Color(0.45, 0.75, 1.0), Vector3.ZERO, true)
+		_add(body, _box(Vector3(0.4, 0.06, 0.4)), Vector3(0.5 * s, 1.98, 0.7), dark)   # hatch bolts
+	_add(body, _box(Vector3(1.0, 0.28, 0.5)), Vector3(0, 1.9, -0.55), Color(0.12, 0.22, 0.32))   # canopy glass
+	_add(body, _box(Vector3(1.7, 0.08, 1.9)), Vector3(0, 1.99, 0.2), hull)                      # turret roof plate
+	_add(body, _cyl(0.025, 1.2, 4), Vector3(-0.6, 2.5, 0.9), dark)                               # antenna
+	_add(body, _box(Vector3(2.2, 0.35, 0.3)), Vector3(0, 0.75, -1.85), dark)                     # front skirt
 	var gun := Node3D.new()
 	gun.name = "Gun"
 	gun.position = Vector3(0, 1.75, -1.0)
@@ -168,6 +187,13 @@ static func _build_isp() -> Node3D:
 	for s in [-1.0, 1.0]:
 		_add(body, _cyl(0.35, 1.4, 10), Vector3(1.15 * s, 0.7, 0.2), teal, Vector3(0, 0, PI / 2))
 		_add(body, _box(Vector3(0.2, 0.35, 1.0)), Vector3(0.9 * s, 1.2, -0.8), dark)
+		# v1.2 detail: big rear fan housings with glowing intakes, nose fins
+		_add(body, _cyl(0.45, 0.5, 12), Vector3(0.65 * s, 1.2, 1.55), dark, Vector3(PI / 2, 0, 0))
+		_add(body, _cyl(0.36, 0.05, 12), Vector3(0.65 * s, 1.2, 1.82), Color(0.45, 0.9, 0.9), Vector3(PI / 2, 0, 0), true)
+		_add(body, _box(Vector3(0.08, 0.4, 0.8)), Vector3(1.05 * s, 1.1, -1.25), teal)
+	_add(body, _box(Vector3(1.2, 0.4, 0.08)), Vector3(0, 1.75, -0.32), Color(0.12, 0.22, 0.32), Vector3(-0.5, 0, 0))   # windshield
+	_add(body, _prism(Vector3(2.0, 0.4, 0.7)), Vector3(0, 0.9, -1.75), hull, Vector3(-PI / 2, 0, 0))                   # nose wedge
+	_add(body, _box(Vector3(2.25, 0.08, 0.3)), Vector3(0, 1.18, -0.2), teal)
 	var gun := Node3D.new()
 	gun.name = "Gun"
 	gun.position = Vector3(0.7, 1.1, -1.3)

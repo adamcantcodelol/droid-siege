@@ -133,6 +133,7 @@ var _test_done := false
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
+	get_tree().root.size_changed.connect(_refresh_render_scale)
 	_setup_input()
 	load_save()
 	_make_sounds()
@@ -240,7 +241,7 @@ func apply_quality() -> void:
 	var q := quality()
 	var vp := get_viewport()
 	vp.scaling_3d_mode = Viewport.SCALING_3D_MODE_BILINEAR
-	vp.scaling_3d_scale = render_scale(q)
+	vp.scaling_3d_scale = render_scale(q) * dyn_scale
 	vp.msaa_3d = Viewport.MSAA_2X if q == 2 else Viewport.MSAA_DISABLED
 	RenderingServer.directional_shadow_atlas_set_size([1024, 2048, 4096][q], true)
 	var CM = load("res://scripts/char_model.gd")
@@ -262,6 +263,38 @@ func render_scale(q: int) -> float:
 	var budget: float = [640.0 * 400.0 * 1.6, 1280.0 * 720.0, 1920.0 * 1080.0][q]
 	var cap: float = [0.75, 0.9, 1.0][q]
 	return clampf(sqrt(budget / px), 0.35, cap)
+
+
+## Dynamic resolution on Low: if the frame rate sits under ~28 fps the 3D render scale steps down
+## (to 60 % of the Low preset at most); it creeps back up when there is headroom.
+var dyn_scale := 1.0
+var _dyn_t := 0.0
+var _dyn_frames := 0
+
+
+func _dynamic_resolution(delta: float) -> void:
+	if world == null or is_headless() or quality() != 0:
+		dyn_scale = 1.0
+		return
+	_dyn_t += delta
+	_dyn_frames += 1
+	if _dyn_t < 2.0:
+		return
+	var fps := _dyn_frames / _dyn_t
+	_dyn_t = 0.0
+	_dyn_frames = 0
+	var old := dyn_scale
+	if fps < 28.0:
+		dyn_scale = maxf(0.6, dyn_scale * 0.9)
+	elif fps > 50.0:
+		dyn_scale = minf(1.0, dyn_scale * 1.05)
+	if absf(old - dyn_scale) > 0.001:
+		_refresh_render_scale()
+
+
+func _refresh_render_scale() -> void:
+	if world != null:
+		get_viewport().scaling_3d_scale = maxf(0.25, render_scale(quality()) * dyn_scale)
 
 
 func is_headless() -> bool:
@@ -1414,6 +1447,7 @@ func _start_test() -> void:
 func _process(_delta: float) -> void:
 	if _pending_relay != null:
 		_pending_relay.poll()
+	_dynamic_resolution(_delta)
 	if test_mode == "" or _test_done:
 		return
 	var elapsed := (Time.get_ticks_msec() - _test_start_ms) / 1000.0
