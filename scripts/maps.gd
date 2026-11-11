@@ -492,6 +492,11 @@ func _mustafar() -> void:
 	B.lava_bridge(Vector2(35, 45), Vector2(11, 6), Color(0.3, 0.28, 0.27))
 	for lp in [Vector3(-40, 2, 5), Vector3(-62, 2, -60), Vector3(35, 2, 40)]:
 		B.light(lp, Color(1.0, 0.4, 0.1), 1.6, 18.0)
+	# lava geysers: erupt every 10 s (staggered), burn anyone standing on the vent
+	B.lava_geyser(Vector3(-15, 0, 18), 0.0)
+	B.lava_geyser(Vector3(20, 0, -8), 3.3)
+	B.lava_geyser(Vector3(-48, 0, -22), 6.6)
+	B.lava_geyser(Vector3(55, 0, 30), 5.0)
 	_room(Vector3(-75, 0, 40), 0.0, Color(0.28, 0.2, 0.17), Color(1.0, 0.45, 0.1))
 	_room(Vector3(65, 0, -50), PI / 2.0, Color(0.28, 0.2, 0.17), Color(1.0, 0.45, 0.1))
 	B.box(Vector3(0, 0.5, 5), Vector3(12, 1.0, 14), cliff, Vector3.ZERO, true, true)

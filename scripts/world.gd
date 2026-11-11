@@ -505,6 +505,10 @@ func _tick_vehicles(delta: float) -> void:
 	# Lava burn hazard (Mustafar)
 	if multiplayer.is_server() and builder != null and not builder.lava_rects.is_empty():
 		_tick_lava(delta)
+	if builder != null and not builder.geysers.is_empty():
+		_tick_geysers(delta)
+	if M.get("layout", "") == "kamino" and not Game.is_headless():
+		_tick_lightning(delta)
 
 
 func _tick_anti_armor_timer(delta: float) -> void:
@@ -647,6 +651,68 @@ func _tick_lava(delta: float) -> void:
 				p.take_damage(20.0 * delta, pos, 0)
 			else:
 				Game.net_peer(p.peer_id, "hit_player", [20.0 * delta, pos, 0])
+
+
+## Lava geysers: 10 s cycle, erupting for the last 2.2 s (column rises, wobbles, falls).
+## Every peer animates from its own mission clock; the server applies the burn.
+var map_time := 0.0
+
+
+func _tick_geysers(delta: float) -> void:
+	map_time += delta
+	for g in builder.geysers:
+		var t: float = fmod(map_time + float(g["phase"]), 10.0)
+		var col: MeshInstance3D = g["col"]
+		var erupt: bool = t > 7.8
+		if t > 6.8 and t <= 7.8 and int(t * 10.0) % 2 == 0:
+			col.visible = true          # warning sputter
+			col.scale = Vector3(0.6, 1.2, 0.6)
+			col.position = g["pos"] + Vector3(0, 0.6, 0)
+		elif erupt:
+			var k: float = (t - 7.8) / 2.2
+			var hgt: float = 9.0 * sin(k * PI) + 1.0
+			col.visible = true
+			col.scale = Vector3(1.0 + 0.1 * sin(map_time * 30.0), hgt, 1.0 + 0.1 * cos(map_time * 27.0))
+			col.position = g["pos"] + Vector3(0, hgt / 2.0, 0)
+		else:
+			col.visible = false
+		if erupt and multiplayer.is_server():
+			for p in players.values():
+				if p.state == 0 and not p.piloting() and _flat_dist(p.global_position, g["pos"]) < 2.6:
+					if p.is_local:
+						p.take_damage(35.0 * delta, g["pos"], 0)
+					else:
+						Game.net_peer(p.peer_id, "hit_player", [35.0 * delta, g["pos"], 0])
+
+
+## Kamino storm: random lightning flashes (sun + sky flare) with a thunder crack a moment later.
+var _lightning_cd := 8.0
+var _lightning_t := -1.0
+
+
+func _tick_lightning(delta: float) -> void:
+	if builder == null or builder.sun == null:
+		return
+	_lightning_cd -= delta
+	if _lightning_cd <= 0.0:
+		_lightning_cd = randf_range(10.0, 22.0)
+		_lightning_t = 0.0
+	if _lightning_t >= 0.0:
+		_lightning_t += delta
+		var base: float = M.get("sun_energy", 0.6)
+		var flash: float = 0.0
+		if _lightning_t < 0.08 or (_lightning_t > 0.16 and _lightning_t < 0.26):
+			flash = 3.5
+		builder.sun.light_energy = base + flash
+		if builder.env != null:
+			builder.env.ambient_light_energy = float(M["ambient"]) + flash * 0.4
+		if _lightning_t > 0.7 and _lightning_t - delta <= 0.7:
+			Game.play_sfx("explosion", null, -14.0)
+		if _lightning_t > 1.0:
+			_lightning_t = -1.0
+			builder.sun.light_energy = base
+			if builder.env != null:
+				builder.env.ambient_light_energy = float(M["ambient"])
 
 
 func _build_gunship() -> Node3D:
@@ -2106,6 +2172,17 @@ func _test_mapcheck() -> void:
 	for key in ["LZ", "post0", "post1", "post2", "team0", "team1"]:
 		if starts.has(key) and builder.in_lava(starts[key]):
 			fails.append("%s in lava" % key)
+	if not builder.geysers.is_empty():
+		var lp = local_player()
+		var g0: Dictionary = builder.geysers[0]
+		lp.global_position = g0["pos"] + Vector3(0.5, 0.6, 0)
+		lp.velocity = Vector3.ZERO
+		var hp0: float = lp.health
+		map_time = 7.85 - float(g0["phase"])
+		await get_tree().create_timer(0.6).timeout
+		print("[test] geyser: hp %.1f -> %.1f, column visible=%s" % [hp0, lp.health, g0["col"].visible])
+		if not (lp.health < hp0 and g0["col"].visible):
+			fails.append("geyser did not erupt/burn")
 	print("[test] mapcheck %s: nav polys=%d, %d start points (%d rooms), %d multimesh batches, %d prop tris, lava=%d, fails=%s" % [M["name"], nav_polys, starts.size(), builder.rooms.size(), mm, tris, builder.lava_rects.size(), fails])
 	Game.finish_test(nav_polys > 100 and fails.is_empty() and builder.rooms.size() >= 4, "MAPCHECK %s" % M["name"])
 

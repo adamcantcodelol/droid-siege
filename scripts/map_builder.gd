@@ -438,6 +438,47 @@ func lava_bridge(center: Vector2, size: Vector2, color: Color) -> void:
 	safe_rects.append(Rect2(center - size / 2.0, size))
 
 
+## Lava geyser: a vent on the ground that periodically erupts a column of lava (world.gd animates
+## and applies damage). Returns the column node.
+var geysers: Array = []   # [{"pos": Vector3, "col": MeshInstance3D, "phase": float}]
+
+
+func lava_geyser(pos: Vector3, phase: float) -> void:
+	var vent := MeshInstance3D.new()
+	var vm := CylinderMesh.new()
+	vm.top_radius = 1.6
+	vm.bottom_radius = 2.2
+	vm.height = 0.5
+	vm.radial_segments = 10
+	vm.material = mat(Color(0.1, 0.06, 0.05), 0.95)
+	vent.mesh = vm
+	vent.position = pos + Vector3(0, 0.25, 0)
+	deco.add_child(vent)
+	var core := MeshInstance3D.new()
+	var cm := CylinderMesh.new()
+	cm.top_radius = 1.0
+	cm.bottom_radius = 1.0
+	cm.height = 0.05
+	cm.radial_segments = 10
+	cm.material = lava_material(Vector2(0, 1), Vector2(3, 3))
+	core.mesh = cm
+	core.position = pos + Vector3(0, 0.52, 0)
+	deco.add_child(core)
+	var col := MeshInstance3D.new()
+	var colm := CylinderMesh.new()
+	colm.top_radius = 0.5
+	colm.bottom_radius = 0.9
+	colm.height = 1.0
+	colm.radial_segments = 8
+	colm.material = lava_material(Vector2(0, -2.5), Vector2(4, 8))
+	col.mesh = colm
+	col.position = pos
+	col.visible = false
+	col.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	deco.add_child(col)
+	geysers.append({"pos": pos, "col": col, "phase": phase})
+
+
 ## True if a ground position is in burning lava (not on a bridge).
 func in_lava(p: Vector3) -> bool:
 	var q := Vector2(p.x, p.z)
