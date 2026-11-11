@@ -458,11 +458,34 @@ func _process(delta: float) -> void:
 			t = "FREE-FOR-ALL   your kills: %d   first to %d   %d:%02d" % [mine.x, world.pvp_target, mins, secs]
 		else:
 			var my_team := "RED" if lp != null and lp.team == 0 else "BLUE"
-			t = "TEAM DEATHMATCH   RED %d - %d BLUE   first to %d   %d:%02d\nYou are on %s team. Friendly fire is off." % [
-				world.team_scores.x, world.team_scores.y, world.pvp_target, mins, secs, my_team]
+			var mname := "TEAM DEATHMATCH"
+			if world.koth:
+				mname = "KING OF THE HILL"
+			elif world.ctf:
+				mname = "CAPTURE THE FLAG"
+			t = "%s   RED %d - %d BLUE   first to %d   %d:%02d\nYou are on %s team. Friendly fire is off." % [
+				mname, world.team_scores.x, world.team_scores.y, world.pvp_target, mins, secs, my_team]
+			if world.koth and lp != null:
+				var hz: Vector3 = world._koth_zone()
+				var hstate := "nobody holds it"
+				if world.koth_owner >= 0:
+					hstate = ("RED" if world.koth_owner == 0 else "BLUE") + " team is scoring"
+				elif world.koth_mask == 3:
+					hstate = "CONTESTED"
+				t += "\nThe Hill: %s  -  %s" % [hstate, _direction_text(lp, hz)]
+			elif world.ctf and lp != null:
+				var enemy_t: int = 1 - clampi(lp.team, 0, 1)
+				if world.flag_carrier[enemy_t] == lp.peer_id:
+					t += "\nYOU HAVE THE FLAG! Bring it home  -  %s" % _direction_text(lp, world.flag_home[clampi(lp.team, 0, 1)])
+				else:
+					t += "\nEnemy flag: %s  -  %s" % ["carried by your team" if world.flag_carrier[enemy_t] != 0 else "grab it", _direction_text(lp, world.flag_pos[enemy_t])]
+				if world.flag_carrier[clampi(lp.team, 0, 1)] != 0:
+					t += "\nYOUR FLAG IS TAKEN! Stop the carrier!"
 		t += "\nHold Tab for the scoreboard"
 	elif world.phase < 3:
 		t = "OBJECTIVE: Capture all 3 command posts, any order  (%d/3)" % world.phase
+		if world.hold:
+			t = "HOLD THE LINE: take and hold Post %s against the droid assault  (%d%%)" % [world.POST_NAMES[world.hold_post], int(world.post_progress[world.hold_post] * 100.0)]
 		if lp != null:
 			var zone: int = world.post_at(lp.global_position)
 			if zone >= 0 and world.post_captured[zone]:

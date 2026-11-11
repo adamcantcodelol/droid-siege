@@ -3,6 +3,11 @@
 extends Node3D
 
 static var _mat_cache := {}
+static var _merge_cache := {}        # path -> {"mesh": ArrayMesh, "skin": Skin, "names": Array}
+static var merge_enabled := true
+static var cull_dist := 0.0          # >0: hide characters farther than this (Low quality)
+var cull := true                     # frustum/distance culling (off for the local trooper)
+var _cull_frame := 0
 static var anim_lod_far := 35.0      # beyond this, animation advances at a reduced rate
 static var anim_lod_every := 4       # far characters advance once every N frames
 
@@ -21,6 +26,8 @@ var pose_cb: Callable
 func setup(path: String, height: float, recolor: Dictionary, anim_map: Dictionary, optional: Array = [], show: Array = []) -> void:
 	var inst: Node3D = load(path).instantiate()
 	add_child(inst)
+	if merge_enabled:
+		_merge_rigid(path, inst, optional)
 	inst.rotation.y = PI   # Quaternius characters face +Z; our forward is -Z
 	amap = anim_map
 	ap = inst.find_child("AnimationPlayer", true, false)
@@ -52,6 +59,120 @@ func setup(path: String, height: float, recolor: Dictionary, anim_map: Dictionar
 			if amap.has(k) and ap.has_animation(amap[k]):
 				ap.get_animation(amap[k]).loop_mode = Animation.LOOP_LINEAR
 		play("idle")
+
+
+## Perf: Quaternius characters are a dozen bone-attached rigid parts plus skinned pieces, i.e.
+## ~19 draw calls per droid. Fold every always-visible part into ONE skinned mesh with one surface
+## per material (rigid parts become 1-bone skinned geometry), so a droid costs 3-4 draw calls.
+func _merge_rigid(path: String, inst: Node3D, optional: Array) -> void:
+	var sk: Skeleton3D = inst.find_child("Skeleton3D", true, false)
+	if sk == null:
+		return
+	if not _merge_cache.has(path):
+		_merge_cache[path] = _build_merged(sk, optional)
+	var md: Dictionary = _merge_cache[path]
+	if md.is_empty():
+		return
+	for n in sk.find_children("*", "MeshInstance3D", true, false):
+		if String(n.name) in md["names"]:
+			n.get_parent().remove_child(n)
+			n.queue_free()
+	var mi := MeshInstance3D.new()
+	mi.name = "Merged"
+	mi.mesh = md["mesh"]
+	mi.skin = md["skin"]
+	sk.add_child(mi)
+	mi.skeleton = NodePath("..")
+
+
+static func _build_merged(sk: Skeleton3D, optional: Array) -> Dictionary:
+	var skin := Skin.new()
+	var groups := {}   # material -> {"v","n","uv","b","w","i"}
+	var names := []
+	var order := []
+	for n in sk.find_children("*", "MeshInstance3D", true, false):
+		var mi := n as MeshInstance3D
+		if mi.mesh == null or String(mi.name) in optional or mi.mesh.get_blend_shape_count() > 0:
+			continue
+		var bone_map := []   # source bind index -> new bind index
+		var xf := Transform3D.IDENTITY
+		var rigid_bind := -1
+		if mi.skin != null:
+			for bi in mi.skin.get_bind_count():
+				var bone := mi.skin.get_bind_bone(bi)
+				if bone < 0:
+					bone = sk.find_bone(mi.skin.get_bind_name(bi))
+				skin.add_bind(bone, mi.skin.get_bind_pose(bi))
+				bone_map.append(skin.get_bind_count() - 1)
+		else:
+			# walk up to the BoneAttachment3D, accumulating the local transform chain
+			var node: Node = mi
+			var chain := Transform3D.IDENTITY
+			var bone := -1
+			while node != null and node != sk:
+				if node is BoneAttachment3D:
+					bone = sk.find_bone((node as BoneAttachment3D).bone_name)
+					break
+				chain = (node as Node3D).transform * chain
+				node = node.get_parent()
+			if bone < 0:
+				continue
+			var rest := sk.get_bone_global_rest(bone)
+			xf = rest * chain
+			skin.add_bind(bone, rest.affine_inverse())
+			rigid_bind = skin.get_bind_count() - 1
+		names.append(String(mi.name))
+		for si in mi.mesh.get_surface_count():
+			var arr := mi.mesh.surface_get_arrays(si)
+			var mat: Material = mi.mesh.surface_get_material(si)
+			if not groups.has(mat):
+				groups[mat] = {"v": PackedVector3Array(), "n": PackedVector3Array(), "uv": PackedVector2Array(), "b": PackedInt32Array(), "w": PackedFloat32Array(), "i": PackedInt32Array()}
+				order.append(mat)
+			var g: Dictionary = groups[mat]
+			var base: int = g["v"].size()
+			var verts: PackedVector3Array = arr[Mesh.ARRAY_VERTEX]
+			var norms = arr[Mesh.ARRAY_NORMAL]
+			var uvs = arr[Mesh.ARRAY_TEX_UV]
+			var bones = arr[Mesh.ARRAY_BONES]
+			var wts = arr[Mesh.ARRAY_WEIGHTS]
+			var stride := 4
+			if bones != null and verts.size() > 0:
+				stride = bones.size() / verts.size()
+			for vi in verts.size():
+				g["v"].append(xf * verts[vi])
+				g["n"].append((xf.basis * norms[vi]).normalized() if norms != null else Vector3.UP)
+				g["uv"].append(uvs[vi] if uvs != null else Vector2.ZERO)
+				if rigid_bind >= 0:
+					g["b"].append_array([rigid_bind, 0, 0, 0])
+					g["w"].append_array([1.0, 0.0, 0.0, 0.0])
+				else:
+					for k in 4:
+						var bk: int = bones[vi * stride + k] if k < stride else 0
+						g["b"].append(bone_map[bk] if bk < bone_map.size() else 0)
+						g["w"].append(wts[vi * stride + k] if k < stride else 0.0)
+			var idx = arr[Mesh.ARRAY_INDEX]
+			if idx != null:
+				for ii in idx:
+					g["i"].append(base + ii)
+			else:
+				for ii in verts.size():
+					g["i"].append(base + ii)
+	if names.size() < 2:
+		return {}
+	var am := ArrayMesh.new()
+	for mat in order:
+		var g: Dictionary = groups[mat]
+		var a := []
+		a.resize(Mesh.ARRAY_MAX)
+		a[Mesh.ARRAY_VERTEX] = g["v"]
+		a[Mesh.ARRAY_NORMAL] = g["n"]
+		a[Mesh.ARRAY_TEX_UV] = g["uv"]
+		a[Mesh.ARRAY_BONES] = g["b"]
+		a[Mesh.ARRAY_WEIGHTS] = g["w"]
+		a[Mesh.ARRAY_INDEX] = g["i"]
+		am.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, a)
+		am.surface_set_material(am.get_surface_count() - 1, mat)
+	return {"mesh": am, "skin": skin, "names": names}
 
 
 func set_visible_meshes(optional: Array, show: Array) -> void:
@@ -91,6 +212,14 @@ func _process(delta: float) -> void:
 	_acc += delta
 	_frame += 1
 	var cam := get_viewport().get_camera_3d()
+	if cull and cam != null:
+		_cull_frame += 1
+		if _cull_frame % 4 == 0 or not visible:
+			var on := _on_screen(cam)
+			if on != visible:
+				visible = on
+		if not visible:
+			return
 	if cam != null and _frame % anim_lod_every != 0:
 		if cam.global_position.distance_squared_to(global_position) > anim_lod_far * anim_lod_far:
 			return
@@ -98,6 +227,21 @@ func _process(delta: float) -> void:
 	_acc = 0.0
 	if pose_cb.is_valid():
 		pose_cb.call()
+
+
+## Cheap visibility: skip rendering AND skinning for characters behind the camera or (on Low)
+## beyond the cull distance. Sphere-vs-frustum with a generous radius so nothing pops at edges.
+func _on_screen(cam: Camera3D) -> bool:
+	var p := global_position + Vector3(0, 1.0, 0)
+	var d2 := cam.global_position.distance_squared_to(p)
+	if d2 < 36.0:
+		return true
+	if cull_dist > 0.0 and d2 > cull_dist * cull_dist:
+		return false
+	for pl in cam.get_frustum():
+		if pl.distance_to(p) > 2.5:
+			return false
+	return true
 
 
 func set_shadows(on: bool) -> void:

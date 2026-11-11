@@ -10,6 +10,7 @@ const GrenadeScript = preload("res://scripts/grenade.gd")
 const HudScript = preload("res://scripts/hud.gd")
 const MapBuilderScript = preload("res://scripts/map_builder.gd")
 const MapsScript = preload("res://scripts/maps.gd")
+const GunshipModel = preload("res://scripts/gunship.gd")
 
 var M: Dictionary = {}
 var DIFF: Dictionary = {}
@@ -76,6 +77,33 @@ var test_elapsed := 0.0
 var enemy_state_packets := 0
 var remote_state_packets := 0
 var server_enemy_count_max := 0
+var low_fx := false
+# ---- v1.2 modes
+var mode := 0
+var hold := false          # Co-op Hold the Line: defend one post, then extract
+var hold_post := 1
+var koth := false          # Versus King of the Hill
+var ctf := false           # Versus Capture the Flag
+var koth_owner := -1       # team currently scoring (-1 none / contested)
+var koth_mask := 0         # bit0 red present, bit1 blue present
+var _koth_acc := [0.0, 0.0]
+var flag_home: Array = [Vector3.ZERO, Vector3.ZERO]
+var flag_pos: Array = [Vector3.ZERO, Vector3.ZERO]
+var flag_carrier := [0, 0]
+var flag_drop_t := [0.0, 0.0]
+var flag_nodes: Array = []
+var koth_ring_mat: StandardMaterial3D
+var flag_cd := 0.0
+const FLAG_RADIUS := 2.2
+const CTF_TARGET := 3
+const KOTH_TARGET := 60
+# ---- gunship extraction
+var extracting := false
+var extract_t := 0.0
+var extract_ids: Array = []
+var cine_cam: Camera3D
+var gun_cd := 0.0
+var gs_dir := Vector3(0, 0, 1)     # direction from map centre out past the LZ (gunship approach)      # Low quality: no dynamic lights on muzzle flashes / explosions
 
 
 func _ready() -> void:
@@ -94,8 +122,30 @@ func _ready() -> void:
 		timer = HORDE_TIME
 	ffa = int(Game.settings.get("mode", 0)) == 2
 	pvp_target = 10 if ffa else 15
+	mode = int(Game.settings.get("mode", 0))
+	koth = mode == Game.KOTH
+	ctf = mode == Game.CTF
+	hold = mode == Game.HOLD
+	if koth:
+		pvp_target = KOTH_TARGET
+	elif ctf:
+		pvp_target = CTF_TARGET
+	if hold:
+		# Hold the Line: the post closest to the map centre is the only objective
+		var best := INF
+		for i in POSTS.size():
+			var d: float = Vector2(POSTS[i].x, POSTS[i].z).length()
+			if d < best:
+				best = d
+				hold_post = i
+		for i in POSTS.size():
+			if i != hold_post:
+				post_captured[i] = true
+				post_progress[i] = 1.0
+		phase = 2
 	LZ = M["lz"]
-	if Game.test_mode in ["smoke", "smoke2", "smokefail", "walkcap", "kbtest", "weapons", "hitbox", "camview", "horde", "mech", "walls", "antitank", "classes"]:
+	gs_dir = Vector3(LZ.x, 0, LZ.z).normalized() if Vector2(LZ.x, LZ.z).length() > 1.0 else Vector3(0, 0, 1)
+	if Game.test_mode in ["smoke", "smoke2", "smokefail", "walkcap", "kbtest", "weapons", "hitbox", "camview", "horde", "mech", "walls", "antitank", "classes", "hold", "koth", "ctf"]:
 		test_speed = 4.0
 		Engine.time_scale = 3.0
 	players_root = _child_node("Players")
@@ -125,7 +175,16 @@ func _ready() -> void:
 		_bench.call_deferred()
 	if Game.test_mode.begins_with("mapcheck"):
 		_test_mapcheck.call_deferred()
-	show_message(("%s (%s): HORDE! Hold out until the gunship arrives." if horde else "%s (%s): squad deployed! Head for Command Post ALPHA.") % [M["name"], DIFF["name"]])
+	var intro := "%s (%s): squad deployed! Head for Command Post ALPHA."
+	if horde:
+		intro = "%s (%s): HORDE! Hold out until the gunship arrives."
+	elif hold:
+		intro = "%s (%s): HOLD THE LINE! Take and hold Post " + POST_NAMES[hold_post] + ", then extract."
+	elif koth:
+		intro = "%s (%s): KING OF THE HILL! Hold the zone to score."
+	elif ctf:
+		intro = "%s (%s): CAPTURE THE FLAG! Steal the enemy flag and bring it home."
+	show_message(intro % [M["name"], DIFF["name"]])
 
 
 func _exit_tree() -> void:
@@ -217,11 +276,14 @@ func _build_level() -> void:
 	for i in POSTS.size():
 		_build_post(i)
 	builder.flush()
+	var merged: int = builder.merge_static()
+	print("[map] merged static visuals into %d meshes" % merged)
 	print("[map] %s built: %d droid entry points, %d occluders" % [M["name"], droid_spawns.size(), builder.occluders])
 
 	_spawn_mechs()
+	_build_mode_visuals()
 	gunship = _build_gunship()
-	gunship.position = LZ + Vector3(0, 80, 0)
+	gunship.position = LZ + gs_dir * 170.0 + Vector3(0, 45, 0)
 	gunship.visible = false
 	add_child(gunship)
 
@@ -280,6 +342,12 @@ func _build_post(i: int) -> void:
 	builder.prop("crate", center + Vector3(-3, 0, -2), 1.1, 1.1, "box")
 	builder.prop("barrel", center + Vector3(-3.4, 0, 2.6), 0.0, 1.2, "cyl", Color.WHITE, 1.0, 0.45)
 	post_visuals.append({"ring_mat": ring_mat, "flag": flag, "flag_mat": flag_mat, "label": lbl, "center": center})
+	if (hold and i != hold_post) or versus:
+		ring.visible = false
+		flag.visible = false
+		lbl.visible = false
+	elif hold:
+		lbl.text = "HOLD " + POST_NAMES[i]
 
 
 ## ---- Driveable vehicles (AT-RT / BARC / TX-130 / ISP) ----
@@ -587,15 +655,15 @@ func _tick_lava(delta: float) -> void:
 
 
 func _build_gunship() -> Node3D:
-	var gs: Node3D = load("res://models/gunship.glb").instantiate()
+	var gs: Node3D = GunshipModel.build()
 	var holder := Node3D.new()
 	holder.name = "Gunship"
 	holder.add_child(gs)
-	gs.scale = Vector3.ONE * 1.2
 	var light := OmniLight3D.new()
 	light.light_color = Color(1, 0.3, 0.2)
 	light.omni_range = 12
 	light.position = Vector3(0, -2, 0)
+	light.add_to_group("map_light")
 	holder.add_child(light)
 	return holder
 
@@ -776,6 +844,15 @@ func _physics_process(delta: float) -> void:
 func _server_tick(delta: float) -> void:
 	if versus:
 		_pvp_tick(delta)
+		if koth:
+			_koth_tick(delta)
+		elif ctf:
+			_ctf_tick(delta)
+		return
+	if extracting:
+		extract_t += delta * test_speed
+		if extract_t >= 6.0:
+			_end_mission(true)
 		return
 	# Fail check: everyone downed or dead
 	var alive := 0
@@ -803,18 +880,21 @@ func _server_tick(delta: float) -> void:
 					ein += 1
 			post_contested[i] = pin > 0 and ein > pin
 			if pin > 0 and ein <= pin:
-				post_progress[i] = minf(1.0, post_progress[i] + delta * (0.05 + 0.018 * (pin - 1)) * test_speed)
+				var rate := 0.05 + 0.018 * (pin - 1)
+				if hold:
+					rate = 0.011 + 0.003 * (pin - 1)   # ~90 s solo, droids pour in the whole time
+				post_progress[i] = minf(1.0, post_progress[i] + delta * rate * test_speed)
 				progress = post_progress[i]
 			elif pin == 0:
-				post_progress[i] = maxf(0.0, post_progress[i] - delta * 0.01)
+				post_progress[i] = maxf(0.0, post_progress[i] - delta * (0.004 if hold else 0.01))
 			if post_progress[i] >= 1.0:
 				post_captured[i] = true
 				post_contested[i] = false
 				earned += int(150 * float(DIFF["credits"]))
 				phase += 1
 				if phase == 3:
-					timer = EXTRACT_TIME
-					Game.net_all("announce", ["All command posts captured! Survive until the gunship arrives!"])
+					timer = 60.0 if hold else EXTRACT_TIME
+					Game.net_all("announce", ["Post held! Survive until the gunship arrives!" if hold else "All command posts captured! Survive until the gunship arrives!"])
 				else:
 					Game.net_all("announce", ["Post %s captured! %d to go." % [POST_NAMES[i], 3 - phase]])
 	elif phase == 3:
@@ -829,17 +909,22 @@ func _server_tick(delta: float) -> void:
 			pickup_t -= delta * test_speed
 			var standing := 0
 			var aboard := 0
+			var ids := []
 			for p in players.values():
 				if p.state == 0:
 					standing += 1
 					if _flat_dist(p.global_position, LZ) < BOARD_RADIUS:
 						aboard += 1
+						ids.append(p.peer_id)
 			board_hold = board_hold + delta * test_speed if (standing > 0 and aboard == standing) else 0.0
+			_door_guns(delta)
 			if board_hold > 1.5 or pickup_t <= 0.0:
 				earned += int((500 if aboard > 0 else 250) * float(DIFF["credits"]))
 				if aboard > 0:
 					Game.net_all("announce", ["%d trooper(s) aboard. Dust off!" % aboard])
-				_end_mission(aboard > 0 or players.size() == 0)
+					Game.net_all("extract_liftoff", [ids])
+					return
+				_end_mission(players.size() == 0)
 				return
 
 	# Enemy AI
@@ -859,7 +944,7 @@ func _server_tick(delta: float) -> void:
 
 	# Waves
 	var n := players.size()
-	var cap := 4 + phase * 2 + 2 * (n - 1) + int(DIFF["cap"])
+	var cap := 4 + phase * 2 + 2 * (n - 1) + int(DIFF["cap"]) + (3 if hold else 0)
 	var interval := 3.5 - phase * 0.5
 	if phase == 3:
 		cap = 10 + 3 * (n - 1) + int(DIFF["cap"])
@@ -1103,7 +1188,7 @@ func on_pvp_died(victim: int, reported_killer: int = 0) -> void:
 	if killer != 0 and killer != victim:
 		var ks: Vector2i = pvp_scores.get(killer, Vector2i.ZERO)
 		pvp_scores[killer] = Vector2i(ks.x + 1, ks.y)
-		if not ffa:
+		if not ffa and not koth and not ctf:
 			var kteami := 0
 			if players.has(killer):
 				kteami = int(players[killer].team)
@@ -1122,7 +1207,7 @@ func on_pvp_died(victim: int, reported_killer: int = 0) -> void:
 			if pvp_scores[pid].x >= pvp_target:
 				_pvp_finish()
 				return
-	elif team_scores.x >= pvp_target or team_scores.y >= pvp_target:
+	elif not koth and not ctf and (team_scores.x >= pvp_target or team_scores.y >= pvp_target):
 		_pvp_finish()
 
 
@@ -1217,14 +1302,19 @@ func on_enemy_died(eid: int, pos: Vector3, killer: int = 0, etype: int = 0) -> v
 
 func _spawn_debris(pos: Vector3, etype: int) -> void:
 	var col: Color = [Color(0.78, 0.68, 0.48), Color(0.3, 0.33, 0.4), Color(0.55, 0.4, 0.25), Color(0.92, 0.75, 0.2), Color(0.45, 0.1, 0.1)][clampi(etype, 0, 4)]
-	for i in 7:
+	if _debris_mesh == null:
+		_debris_mesh = BoxMesh.new()
+		_debris_mesh.size = Vector3(0.2, 0.2, 0.28)
+	if not _debris_mats.has(etype):
+		var dm := StandardMaterial3D.new()
+		dm.albedo_color = col
+		_debris_mats[etype] = dm
+	for i in (3 if low_fx else 7):
 		var mi := MeshInstance3D.new()
-		var bm := BoxMesh.new()
-		bm.size = Vector3(randf_range(0.1, 0.3), randf_range(0.1, 0.3), randf_range(0.1, 0.4))
-		var m := StandardMaterial3D.new()
-		m.albedo_color = col
-		bm.material = m
-		mi.mesh = bm
+		mi.mesh = _debris_mesh
+		mi.material_override = _debris_mats[etype]
+		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		mi.scale = Vector3(randf_range(0.5, 1.5), randf_range(0.5, 1.5), randf_range(0.5, 1.5))
 		fx_root.add_child(mi)
 		mi.global_position = pos
 		var dest := pos + Vector3(randf_range(-2.5, 2.5), randf_range(-0.9, 1.5), randf_range(-2.5, 2.5))
@@ -1265,7 +1355,11 @@ func on_mission_end(win: bool, credits: int, k: int) -> void:
 	Game.write_save()
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 	hud.show_end(win, credits, k)
-	if Game.test_mode in ["smoke", "smoke2", "horde"]:
+	if Game.test_mode == "hold":
+		print("[test] hold: post %s held, extracted=%s aboard=%s other posts hidden=%s" % [POST_NAMES[hold_post], extracting, extract_ids, not post_visuals[(hold_post + 1) % 3]["label"].visible])
+		Game.finish_test(win and extracting and extract_ids.size() == 1 and not post_visuals[(hold_post + 1) % 3]["label"].visible, "HOLD THE LINE + gunship extraction cinematic")
+	elif Game.test_mode in ["smoke", "smoke2", "horde"]:
+		print("[test] gunship extraction: liftoff=%s aboard=%s gunship_y=%.1f" % [extracting, extract_ids, gunship.position.y])
 		var plen := nav_path_length(LZ, POSTS[0])
 		print("[test] map=%s diff=%s nav polys=%d path_points LZ->ALPHA=%d" % [M["name"], DIFF["name"], nav_polys, plen])
 		print("[test] kill feed entries=%d" % hud.feed_box.get_child_count())
@@ -1305,15 +1399,23 @@ func spawn_bolt(from: Vector3, to: Vector3, kind: int) -> void:
 
 
 var _fx_flash_mesh: SphereMesh
+var _fx_boom_mesh: SphereMesh
+var _debris_mesh: BoxMesh
+var _debris_mats := {}
 var _fx_flash_mat_ally: StandardMaterial3D
 var _fx_flash_mat_enemy: StandardMaterial3D
 
 func _muzzle_flash(pos: Vector3, kind: int) -> void:
 	var c := Color(0.5, 0.75, 1.0) if kind != 1 else Color(1.0, 0.35, 0.2)
-	var l := OmniLight3D.new()
-	l.light_color = c
-	l.light_energy = 2.5
-	l.omni_range = 4.0
+	var l: Node3D
+	if low_fx:
+		l = Node3D.new()
+	else:
+		var ol := OmniLight3D.new()
+		ol.light_color = c
+		ol.light_energy = 2.5
+		ol.omni_range = 4.0
+		l = ol
 	var mi := MeshInstance3D.new()
 	if _fx_flash_mesh == null:
 		_fx_flash_mesh = SphereMesh.new()
@@ -1351,27 +1453,32 @@ func spawn_explosion(pos: Vector3, scale_mul: float = 1.0) -> void:
 	fx_root.add_child(root)
 	root.global_position = pos
 	var mi := MeshInstance3D.new()
-	var sm := SphereMesh.new()
-	sm.radius = 1.0
-	sm.height = 2.0
+	if _fx_boom_mesh == null:
+		_fx_boom_mesh = SphereMesh.new()
+		_fx_boom_mesh.radius = 1.0
+		_fx_boom_mesh.height = 2.0
+		_fx_boom_mesh.radial_segments = 12
+		_fx_boom_mesh.rings = 6
 	var m := StandardMaterial3D.new()
 	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	m.albedo_color = Color(1.0, 0.6, 0.2, 0.9)
 	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	sm.material = m
-	mi.mesh = sm
+	mi.mesh = _fx_boom_mesh
+	mi.material_override = m
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	mi.scale = Vector3.ONE * 0.3 * scale_mul
 	root.add_child(mi)
-	var light := OmniLight3D.new()
-	light.light_color = Color(1, 0.6, 0.3)
-	light.light_energy = 4.0 * scale_mul
-	light.omni_range = 10.0 * scale_mul
-	root.add_child(light)
 	var tw := root.create_tween()
 	tw.set_parallel(true)
 	tw.tween_property(mi, "scale", Vector3.ONE * 4.0 * scale_mul, 0.45)
 	tw.tween_property(m, "albedo_color:a", 0.0, 0.45)
-	tw.tween_property(light, "light_energy", 0.0, 0.45)
+	if not low_fx:
+		var light := OmniLight3D.new()
+		light.light_color = Color(1, 0.6, 0.3)
+		light.light_energy = 4.0 * scale_mul
+		light.omni_range = 10.0 * scale_mul
+		root.add_child(light)
+		tw.tween_property(light, "light_energy", 0.0, 0.45)
 	tw.chain().tween_callback(root.queue_free)
 	Game.play_sfx("explosion", pos, -2.0 if scale_mul >= 1.0 else -10.0)
 
@@ -1406,15 +1513,301 @@ func _update_visuals(delta: float) -> void:
 		v["flag_mat"].emission = col
 		var c: Vector3 = v["center"]
 		v["flag"].position = c + Vector3(0, h, 1.05)
-	# Gunship arrives during the last 25 seconds of extraction
-	if phase >= 3:
-		var t := clampf(timer / 25.0, 0.0, 1.0)
-		gunship.visible = timer < 25.0 or ended
-		var target_y := (2.2 if timer <= 0.0 else 6.0) + 74.0 * t
-		if ended and timer <= 0.0:
-			target_y = 40.0   # lift off
-		gunship.position.y = lerpf(gunship.position.y, target_y, minf(1.0, delta * 2.0))
-		gunship.rotation.y += delta * 0.05 * t
+	_update_gunship(delta)
+	_update_mode_visuals(delta)
+
+
+# ------------------------------------------------------------------ gunship extraction
+const GS_LANDED_Y := 2.75
+
+## Gunship flight: flies in from outside the map over the last 25 s of the extraction clock,
+## hovers, settles on the LZ with its bay doors open, then lifts off with the squad (cinematic).
+func _update_gunship(delta: float) -> void:
+	if gunship == null or versus:
+		return
+	if extracting:
+		extract_t += 0.0 if multiplayer.is_server() else delta * test_speed
+		var et := extract_t
+		var fwd := -gs_dir
+		var p: Vector3
+		if et < 1.6:
+			p = LZ + Vector3(0, GS_LANDED_Y + et * et * 2.2, 0)
+		else:
+			var k := et - 1.6
+			p = LZ + Vector3(0, GS_LANDED_Y + 5.6 + k * 6.0 + k * k * 1.5, 0) + fwd * (k * k * 7.0)
+		gunship.position = gunship.position.lerp(p, minf(1.0, delta * 8.0))
+		gunship.rotation.x = lerpf(gunship.rotation.x, -0.18 if et > 1.6 else 0.0, delta * 2.0)
+		gunship.rotation.z = sin(et * 0.9) * 0.08
+		GunshipModel.set_doors(gunship.get_child(0), maxf(0.0, 1.0 - et))
+		if cine_cam != null:
+			var side := Vector3.UP.cross(gs_dir).normalized()
+			var cpos := LZ + side * 16.0 + gs_dir * 10.0 + Vector3(0, 5.0 + et * 2.5, 0)
+			cine_cam.global_position = cine_cam.global_position.lerp(cpos, minf(1.0, delta * 3.0))
+			cine_cam.look_at(gunship.global_position + Vector3(0, 1, 0), Vector3.UP)
+		return
+	if phase < 3:
+		gunship.visible = false
+		return
+	gunship.visible = timer < 25.0 or ended
+	if not gunship.visible:
+		return
+	var hover := LZ + Vector3(0, 9.0, 0)
+	var start := LZ + gs_dir * 170.0 + Vector3(0, 45, 0)
+	var target: Vector3
+	if timer > 4.0:
+		var a := clampf((25.0 - timer) / 21.0, 0.0, 1.0)
+		a = 1.0 - pow(1.0 - a, 2.2)   # decelerate on approach
+		target = start.lerp(hover, a)
+	elif timer > 0.0:
+		target = LZ + Vector3(0, lerpf(GS_LANDED_Y, 9.0, timer / 4.0), 0)
+	else:
+		target = LZ + Vector3(0, GS_LANDED_Y, 0)
+	gunship.position = gunship.position.lerp(target, minf(1.0, delta * 3.0))
+	gunship.rotation.y = atan2(gs_dir.x, gs_dir.z)
+	gunship.rotation.x = lerpf(gunship.rotation.x, 0.12 if timer > 4.0 else 0.0, delta * 2.0)
+	GunshipModel.set_doors(gunship.get_child(0), 1.0 if timer < 6.0 else 0.0)
+
+
+## Door gunners cover the boarding squad: every 0.45 s, shoot the nearest droid in range.
+func _door_guns(delta: float) -> void:
+	gun_cd -= delta * test_speed
+	if gun_cd > 0.0 or gunship == null:
+		return
+	gun_cd = 0.45
+	var from: Vector3 = gunship.global_position + Vector3(0, 0.3, 0)
+	var best = null
+	var bd := 45.0
+	for e in enemies.values():
+		if not is_instance_valid(e) or e.hp <= 0.0:
+			continue
+		var d: float = e.global_position.distance_to(from)
+		if d < bd and has_los(from + Vector3(0, -1.0, 0), e.global_position + Vector3(0, 1.0, 0)):
+			bd = d
+			best = e
+	if best == null:
+		return
+	var to: Vector3 = best.global_position + Vector3(0, 1.0, 0)
+	Game.net_all("bolt_fx", [from, to, 0])
+	GunshipModel.aim_turrets(gunship.get_child(0), to)
+	damage_enemy(best.eid, 45.0, from, 0, false)
+
+
+## Every peer: lift-off cinematic. Boarded troopers vanish into the bay; a side camera follows.
+func on_extract_liftoff(ids: Array) -> void:
+	if extracting:
+		return
+	extracting = true
+	extract_t = 0.0
+	extract_ids = ids
+	for pid in ids:
+		var p = players.get(int(pid))
+		if p != null:
+			p.visible = false
+			p.god = true
+	if not Game.is_headless():
+		cine_cam = Camera3D.new()
+		cine_cam.far = 400.0
+		add_child(cine_cam)
+		var side := Vector3.UP.cross(gs_dir).normalized()
+		cine_cam.global_position = LZ + side * 14.0 + gs_dir * 8.0 + Vector3(0, 4.0, 0)
+		cine_cam.look_at(LZ + Vector3(0, 2, 0), Vector3.UP)
+		cine_cam.current = true
+	if hud != null:
+		hud.show_message("EXTRACTION! %d trooper(s) aboard the gunship." % ids.size())
+
+
+# ------------------------------------------------------------------ v1.2 modes: KOTH / CTF / Hold
+func _koth_zone() -> Vector3:
+	var best := 0
+	var bd := INF
+	for i in POSTS.size():
+		var d: float = Vector2(POSTS[i].x, POSTS[i].z).length()
+		if d < bd:
+			bd = d
+			best = i
+	return POSTS[best]
+
+
+func _build_mode_visuals() -> void:
+	if koth:
+		var ring := MeshInstance3D.new()
+		var rm := CylinderMesh.new()
+		rm.top_radius = CAPTURE_RADIUS + 1.0
+		rm.bottom_radius = CAPTURE_RADIUS + 1.0
+		rm.height = 0.06
+		rm.radial_segments = 28
+		koth_ring_mat = _mat(Color(0.9, 0.9, 0.9), 0.5, 0.8)
+		koth_ring_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		koth_ring_mat.albedo_color.a = 0.4
+		rm.material = koth_ring_mat
+		ring.mesh = rm
+		ring.position = _koth_zone() + Vector3(0, 0.05, 0)
+		ring.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		add_child(ring)
+		var lbl := Label3D.new()
+		lbl.text = "THE HILL"
+		lbl.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+		lbl.font_size = 96
+		lbl.outline_size = 16
+		lbl.no_depth_test = true
+		lbl.pixel_size = 0.02
+		lbl.position = _koth_zone() + Vector3(0, 9, 0)
+		add_child(lbl)
+	if ctf:
+		for t in 2:
+			var home: Vector3 = M["spawns"][t]
+			home = home + (Vector3(-home.x, 0, -home.z).normalized() * 6.0 if Vector2(home.x, home.z).length() > 1.0 else Vector3.ZERO)
+			flag_home[t] = home
+			flag_pos[t] = home
+			var col := Color(0.9, 0.15, 0.12) if t == 0 else Color(0.15, 0.4, 1.0)
+			var root := Node3D.new()
+			root.name = "Flag%d" % t
+			var pole := MeshInstance3D.new()
+			var pm := CylinderMesh.new()
+			pm.top_radius = 0.05
+			pm.bottom_radius = 0.05
+			pm.height = 3.0
+			pm.radial_segments = 6
+			pole.mesh = pm
+			pole.material_override = _mat(Color(0.3, 0.3, 0.32))
+			pole.position.y = 1.5
+			root.add_child(pole)
+			var cloth := MeshInstance3D.new()
+			var cm := BoxMesh.new()
+			cm.size = Vector3(0.05, 0.9, 1.4)
+			cloth.mesh = cm
+			cloth.material_override = _mat(col, 0.5, 0.8)
+			cloth.position = Vector3(0, 2.5, 0.72)
+			cloth.name = "Cloth"
+			root.add_child(cloth)
+			root.position = home
+			add_child(root)
+			flag_nodes.append(root)
+			var pad := MeshInstance3D.new()
+			var dm := CylinderMesh.new()
+			dm.top_radius = FLAG_RADIUS
+			dm.bottom_radius = FLAG_RADIUS
+			dm.height = 0.05
+			dm.radial_segments = 20
+			pad.mesh = dm
+			pad.material_override = _mat(col.darkened(0.3), 0.5, 0.5)
+			pad.position = home + Vector3(0, 0.03, 0)
+			add_child(pad)
+
+
+## Server: 1 point per second to the only team standing in the zone.
+func _koth_tick(delta: float) -> void:
+	var z := _koth_zone()
+	var mask := 0
+	for p in players.values():
+		if p.state == 0 and _flat_dist(p.global_position, z) < CAPTURE_RADIUS + 1.0:
+			mask |= 1 << clampi(p.team, 0, 1)
+	var own := 0 if mask == 1 else (1 if mask == 2 else -1)
+	if own != koth_owner and own >= 0:
+		Game.net_all("feed", ["%s TEAM controls the hill!" % ("RED" if own == 0 else "BLUE")])
+	koth_owner = own
+	koth_mask = mask
+	if own >= 0:
+		_koth_acc[own] += delta * test_speed
+		while _koth_acc[own] >= 1.0:
+			_koth_acc[own] -= 1.0
+			if own == 0:
+				team_scores.x += 1
+			else:
+				team_scores.y += 1
+	if team_scores.x >= pvp_target or team_scores.y >= pvp_target:
+		_pvp_finish()
+	_send_flag_state(delta)
+
+
+## Server: CTF rules. Touch the enemy flag to take it; touch your own dropped flag to return it;
+## carry the enemy flag onto your own pad while your flag is home to score. Dropped flags return in 20 s.
+func _ctf_tick(delta: float) -> void:
+	for t in 2:
+		var c: int = flag_carrier[t]
+		if c != 0:
+			var cp = players.get(c)
+			if cp == null or cp.state != 0:
+				flag_carrier[t] = 0
+				flag_drop_t[t] = 20.0
+				flag_pos[t] = Vector3(flag_pos[t].x, 0.0, flag_pos[t].z)
+				Game.net_all("feed", ["%s flag dropped!" % ("RED" if t == 0 else "BLUE")])
+				continue
+			flag_pos[t] = cp.global_position
+			var own: int = 1 - t
+			if flag_carrier[own] == 0 and flag_pos[own].distance_to(flag_home[own]) < 0.5 \
+					and _flat_dist(cp.global_position, flag_home[own]) < FLAG_RADIUS + 0.6:
+				flag_carrier[t] = 0
+				flag_pos[t] = flag_home[t]
+				if own == 0:
+					team_scores.x += 1
+				else:
+					team_scores.y += 1
+				Game.net_all("feed", ["%s captured the %s flag!" % [_pname(c), "RED" if t == 0 else "BLUE"]])
+				Game.net_all("announce", ["%s TEAM SCORES!  RED %d - %d BLUE" % ["RED" if own == 0 else "BLUE", team_scores.x, team_scores.y]])
+			continue
+		var at_home: bool = flag_pos[t].distance_to(flag_home[t]) < 0.5
+		if not at_home:
+			flag_drop_t[t] -= delta * test_speed
+			if flag_drop_t[t] <= 0.0:
+				flag_pos[t] = flag_home[t]
+				Game.net_all("feed", ["%s flag returned." % ("RED" if t == 0 else "BLUE")])
+				continue
+		for p in players.values():
+			if p.state != 0 or _flat_dist(p.global_position, flag_pos[t]) > FLAG_RADIUS:
+				continue
+			if p.team != t:
+				flag_carrier[t] = p.peer_id
+				Game.net_all("feed", ["%s took the %s flag!" % [p.display_name, "RED" if t == 0 else "BLUE"]])
+				break
+			elif not at_home:
+				flag_pos[t] = flag_home[t]
+				Game.net_all("feed", ["%s returned the %s flag." % [p.display_name, "RED" if t == 0 else "BLUE"]])
+				break
+	if team_scores.x >= pvp_target or team_scores.y >= pvp_target:
+		_pvp_finish()
+	_send_flag_state(delta)
+
+
+func _send_flag_state(delta: float) -> void:
+	flag_cd -= delta
+	if flag_cd > 0.0:
+		return
+	flag_cd = 0.1
+	Game.net_all("flag_state", [Vector2i(flag_carrier[0], flag_carrier[1]), flag_pos[0], flag_pos[1], koth_owner, koth_mask])
+
+
+func apply_flag_state(carriers: Vector2i, red_pos: Vector3, blue_pos: Vector3, k_owner: int, mask: int) -> void:
+	flag_carrier = [carriers.x, carriers.y]
+	if not multiplayer.is_server():
+		flag_pos = [red_pos, blue_pos]
+	koth_owner = k_owner
+	koth_mask = mask
+
+
+func _update_mode_visuals(delta: float) -> void:
+	if koth_ring_mat != null:
+		var col := Color(0.9, 0.9, 0.9)
+		if koth_owner == 0:
+			col = Color(1.0, 0.2, 0.15)
+		elif koth_owner == 1:
+			col = Color(0.2, 0.45, 1.0)
+		elif koth_mask == 3:
+			col = Color(1.0, 0.6, 0.1) if int(Time.get_ticks_msec() / 250) % 2 == 0 else Color(0.9, 0.9, 0.9)
+		koth_ring_mat.albedo_color = Color(col.r, col.g, col.b, 0.4)
+		koth_ring_mat.emission = col
+	for t in flag_nodes.size():
+		var n: Node3D = flag_nodes[t]
+		var c: int = flag_carrier[t]
+		var target: Vector3 = flag_pos[t]
+		var cp = players.get(c) if c != 0 else null
+		if cp != null:
+			target = cp.global_position + Vector3(0, 0.6, 0.0) - cp.global_transform.basis.z * -0.35
+			n.global_position = target
+		else:
+			n.global_position = n.global_position.lerp(target, minf(1.0, delta * 10.0))
+		var cloth := n.get_node("Cloth") as Node3D
+		cloth.rotation.y = sin(Time.get_ticks_msec() * 0.004 + t) * 0.25
 
 
 # ------------------------------------------------------------------ headless test autopilot
@@ -1424,7 +1817,7 @@ func _test_autopilot(delta: float) -> void:
 	if Game.test_mode == "pvp_bidir_server":
 		_test_pvp_bidir_server(delta)
 		return
-	if Game.test_mode not in ["smoke", "smoke2", "smokefail", "walkcap", "kbtest", "weapons", "hitbox", "camview", "horde", "mech", "walls", "antitank", "classes"]:
+	if Game.test_mode not in ["smoke", "smoke2", "smokefail", "walkcap", "kbtest", "weapons", "hitbox", "camview", "horde", "mech", "walls", "antitank", "classes", "hold", "koth", "ctf"]:
 		return
 	test_elapsed += delta
 	var lp = local_player()
@@ -1458,7 +1851,13 @@ func _test_autopilot(delta: float) -> void:
 	if Game.test_mode == "kbtest":
 		_test_keyboard(delta, lp)
 		return
-	if Game.test_mode in ["smoke", "smoke2", "horde"]:
+	if Game.test_mode == "koth":
+		_test_koth(lp)
+		return
+	if Game.test_mode == "ctf":
+		_test_ctf(lp)
+		return
+	if Game.test_mode in ["smoke", "smoke2", "horde", "hold"]:
 		lp.god = true
 		if phase < 3:
 			lp.global_position = POSTS[nearest_open_post(lp.global_position)] + Vector3(1, 0.5, 1)
@@ -1476,6 +1875,51 @@ func _test_autopilot(delta: float) -> void:
 			explode(lp.global_position + Vector3(0, 0, -3), 1)
 	elif Game.test_mode == "smokefail" and test_elapsed > 3.0 and lp.state == 0:
 		lp.take_damage(99999.0, lp.global_position + Vector3(5, 0, 0))
+
+
+## King of the Hill: a lone RED trooper on the hill scores ~1 point per second.
+func _test_koth(lp) -> void:
+	lp.god = true
+	if _t_stage == 0:
+		lp.global_position = _koth_zone() + Vector3(1, 0.5, 1)
+		lp.velocity = Vector3.ZERO
+		_t_mark = test_elapsed
+		_t_stage = 1
+	elif test_elapsed - _t_mark > 1.5:
+		print("[test] koth: owner=%d mask=%d score RED %d - %d BLUE (target %d)" % [koth_owner, koth_mask, team_scores.x, team_scores.y, pvp_target])
+		Game.finish_test(koth and versus and koth_owner == 0 and team_scores.x >= 3 and team_scores.y == 0, "KOTH zone scoring")
+		_t_stage = 99
+
+
+## Capture the Flag: RED trooper grabs the BLUE flag, carries it home and scores; flag resets.
+func _test_ctf(lp) -> void:
+	lp.god = true
+	match _t_stage:
+		0:
+			lp.global_position = flag_pos[1] + Vector3(0.5, 0.5, 0)
+			lp.velocity = Vector3.ZERO
+			_t_mark = test_elapsed
+			_t_stage = 1
+		1:
+			lp.global_position = flag_pos[1] if flag_carrier[1] == 0 else lp.global_position
+			if flag_carrier[1] == lp.peer_id:
+				print("[test] ctf: picked up BLUE flag")
+				lp.global_position = flag_home[0] + Vector3(0.3, 0.5, 0)
+				lp.velocity = Vector3.ZERO
+				_t_stage = 2
+				_t_mark = test_elapsed
+			elif test_elapsed - _t_mark > 3.0:
+				Game.finish_test(false, "CTF pickup never happened")
+				_t_stage = 99
+		2:
+			if team_scores.x >= 1:
+				var reset: bool = flag_carrier[1] == 0 and flag_pos[1].distance_to(flag_home[1]) < 0.5
+				print("[test] ctf: captured, score RED %d - %d BLUE, blue flag reset=%s" % [team_scores.x, team_scores.y, reset])
+				Game.finish_test(ctf and reset and flag_nodes.size() == 2, "CTF pickup + capture + reset")
+				_t_stage = 99
+			elif test_elapsed - _t_mark > 3.0:
+				Game.finish_test(false, "CTF capture never happened")
+				_t_stage = 99
 
 
 var _t_start := Vector3.ZERO
@@ -1731,6 +2175,20 @@ func _bench() -> void:
 		_create_enemy(next_enemy_id, [0, 0, 1, 3, 0, 2][i % 6], pos + Vector3(0, 0.5, 0))
 		next_enemy_id += 1
 	await get_tree().create_timer(1.0).timeout
+	if OS.get_environment("DS_GUNSHIP") != "":
+		phase = 3
+		timer = 0.0
+		gunship.position = LZ + Vector3(0, GS_LANDED_Y, 0)
+		var c := Camera3D.new()
+		add_child(c)
+		c.global_position = LZ + Vector3(14, 6, -10)
+		c.look_at(LZ + Vector3(0, 2, 0))
+		c.current = true
+		await get_tree().create_timer(0.5).timeout
+	if OS.get_environment("DS_SHOT") != "":
+		await Game._save_shot(OS.get_environment("DS_SHOT"))
+	if OS.get_environment("DS_PROFILE") != "":
+		await _bench_profile()
 	var frames := []
 	var dc := 0.0
 	var prims := 0.0
@@ -1757,13 +2215,61 @@ func _bench() -> void:
 	Game.finish_test(true, "BENCH")
 
 
+func _bench_sample(label: String, secs: float = 3.0) -> void:
+	var t0 := Time.get_ticks_usec()
+	var n := 0
+	var dc := 0.0
+	await get_tree().process_frame
+	t0 = Time.get_ticks_usec()
+	while Time.get_ticks_usec() - t0 < int(secs * 1000000):
+		await get_tree().process_frame
+		n += 1
+		dc += Performance.get_monitor(Performance.RENDER_TOTAL_DRAW_CALLS_IN_FRAME)
+	var ms := (Time.get_ticks_usec() - t0) / 1000.0 / n
+	print("[prof] %-28s %.1fms fps=%.1f dc=%.0f" % [label, ms, 1000.0 / ms, dc / n])
+
+
+func _bench_profile() -> void:
+	await _bench_sample("baseline")
+	builder.sun.shadow_enabled = false
+	await _bench_sample("no shadow")
+	var lights := find_children("*", "OmniLight3D", true, false)
+	for l in lights: l.visible = false
+	await _bench_sample("no omni (%d)" % lights.size())
+	builder.env.fog_enabled = false
+	builder.env.glow_enabled = false
+	await _bench_sample("no fog/glow")
+	get_viewport().scaling_3d_scale = 0.5
+	await _bench_sample("scale 0.5")
+	enemies_root.visible = false
+	await _bench_sample("no enemies")
+	players_root.visible = false
+	await _bench_sample("no players")
+	builder.deco.visible = false
+	await _bench_sample("no deco")
+	nav_region.visible = false
+	await _bench_sample("no level")
+
+
 func apply_quality(q: int) -> void:
+	low_fx = q == 0
 	if builder != null and builder.sun != null:
-		builder.sun.shadow_enabled = true
-		builder.sun.directional_shadow_mode = DirectionalLight3D.SHADOW_ORTHOGONAL if q == 0 else DirectionalLight3D.SHADOW_PARALLEL_2_SPLITS
-		builder.sun.directional_shadow_max_distance = [35.0, 50.0, 70.0][q]
+		# Low: no shadow pass at all (it was ~100 extra draw calls per frame on integrated GPUs)
+		builder.sun.shadow_enabled = q > 0
+		builder.sun.directional_shadow_mode = DirectionalLight3D.SHADOW_ORTHOGONAL if q == 1 else DirectionalLight3D.SHADOW_PARALLEL_2_SPLITS
+		builder.sun.directional_shadow_max_distance = [35.0, 45.0, 70.0][q]
 	if builder != null and builder.env != null:
 		builder.env.glow_enabled = q == 2
+		# Low: flat-colour background instead of rendering the procedural sky every frame
+		builder.env.background_mode = Environment.BG_COLOR if q == 0 else Environment.BG_SKY
+		builder.env.background_color = builder.env.fog_light_color
+		builder.env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR if q == 0 else Environment.AMBIENT_SOURCE_SKY
+		builder.env.ambient_light_color = builder.env.fog_light_color.lerp(Color(0.6, 0.6, 0.65), 0.5)
+	# Omni lights are a full extra pass per lit object on the WebGL renderer: none on Low,
+	# short fade distance on Medium. Emissive meshes still read as lights.
+	for l in get_tree().get_nodes_in_group("map_light"):
+		l.visible = q > 0
+		l.distance_fade_begin = [20.0, 30.0, 60.0][q]
 	if rain != null:
 		rain.amount = [150, 300, 600][q]
 	if builder != null:
@@ -1974,7 +2480,7 @@ func _test_camview(lp) -> void:
 			if mi.is_visible_in_tree():
 				vis += 1
 		print("[test] camview at %s: spring_hit=%.2f cam->head=%.2f trooper_on_screen=%s visible_meshes=%d" % [sp[0], lp.spring.get_hit_length(), dist, on_screen, vis])
-		ok = ok and on_screen and dist >= 1.1 and vis >= 3
+		ok = ok and on_screen and dist >= 1.1 and vis >= 2   # merged body + weapon
 	# ADS (Q / right mouse) without firing must hold a still aim pose, not loop the recoil cycle
 	Input.action_press("kb_aim")
 	for k in 20:

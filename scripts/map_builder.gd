@@ -148,6 +148,7 @@ func light(pos: Vector3, color: Color, energy: float, rng: float) -> void:
 	l.distance_fade_enabled = true
 	l.distance_fade_begin = 60.0
 	l.distance_fade_length = 10.0
+	l.add_to_group("map_light")
 	deco.add_child(l)
 
 
@@ -236,6 +237,47 @@ func flush(vis_end: float = 0.0) -> void:
 				mmi.visibility_range_end = vis_end
 			deco.add_child(mmi)
 	_batches.clear()
+
+
+## Perf: fold every static box/cylinder visual into one mesh per (material, 48 m chunk).
+## Collision bodies stay as they are; only the MeshInstance3D children are replaced.
+## Typical map: ~150 primitive draw calls -> ~25.
+func merge_static() -> int:
+	var groups := {}
+	for b in parent.get_children():
+		if not (b is StaticBody3D):
+			continue
+		for c in b.get_children():
+			if not (c is MeshInstance3D):
+				continue
+			var mi := c as MeshInstance3D
+			var pm := mi.mesh as PrimitiveMesh
+			if pm == null or not (pm is BoxMesh or pm is CylinderMesh):
+				continue
+			var m: Material = pm.material
+			if m is BaseMaterial3D and (m as BaseMaterial3D).transparency != BaseMaterial3D.TRANSPARENCY_DISABLED:
+				continue
+			var xf: Transform3D = (b as Node3D).transform * mi.transform
+			var cell := Vector2i(floori(xf.origin.x / CHUNK), floori(xf.origin.z / CHUNK))
+			var key := [m, cell]
+			if not groups.has(key):
+				groups[key] = []
+			groups[key].append([pm, xf])
+			b.remove_child(mi)
+			mi.queue_free()
+	var n := 0
+	for key in groups:
+		var st := SurfaceTool.new()
+		for it in groups[key]:
+			st.append_from(it[0], 0, it[1])
+		var mesh := st.commit()
+		mesh.surface_set_material(0, key[0])
+		var out := MeshInstance3D.new()
+		out.mesh = mesh
+		out.name = "Merged%d" % n
+		deco.add_child(out)
+		n += 1
+	return n
 
 
 # ------------------------------------------------------------------ composite pieces

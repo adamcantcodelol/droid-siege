@@ -21,11 +21,47 @@ static func stats(vtype: int) -> Dictionary:
 
 
 static func build_type(vtype: int) -> Node3D:
+	var root: Node3D
 	match clampi(vtype, 0, 3):
-		1: return _build_barc()
-		2: return _build_tank()
-		3: return _build_isp()
-		_: return build()  # AT-RT
+		1: root = _build_barc()
+		2: root = _build_tank()
+		3: root = _build_isp()
+		_: root = build()  # AT-RT
+	merge_meshes(root)
+	return root
+
+
+## Perf: vehicles are built from 30-60 primitives. Within every node, fold the unnamed static
+## MeshInstance3D children that share a material into one mesh (animated sub-nodes like legs,
+## guns and named parts such as muzzle flashes keep their own transforms). ~5x fewer draw calls.
+static func merge_meshes(node: Node) -> void:
+	var groups := {}
+	for c in node.get_children():
+		if c is MeshInstance3D and String(c.name).begins_with("@") and c.get_child_count() == 0 and c.visible:
+			var mi := c as MeshInstance3D
+			var m: Material = mi.material_override
+			if m == null or mi.mesh == null:
+				continue
+			if not groups.has(m):
+				groups[m] = []
+			groups[m].append(mi)
+	for m in groups:
+		var list: Array = groups[m]
+		if list.size() < 2:
+			continue
+		var st := SurfaceTool.new()
+		for mi in list:
+			for si in mi.mesh.get_surface_count():
+				st.append_from(mi.mesh, si, mi.transform)
+			node.remove_child(mi)
+			mi.queue_free()
+		var out := MeshInstance3D.new()
+		out.mesh = st.commit()
+		out.material_override = m
+		node.add_child(out)
+	for c in node.get_children():
+		if not (c is MeshInstance3D):
+			merge_meshes(c)
 
 
 static func animate_type(root: Node3D, vtype: int, t: float, amount: float, lean := 0.0) -> void:

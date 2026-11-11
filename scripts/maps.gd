@@ -79,7 +79,7 @@ func _lz_pad() -> void:
 	# team spawns get the same small staging area (Versus)
 	for i in M["spawns"].size():
 		var sp: Vector3 = M["spawns"][i]
-		var c := Color(0.35, 0.55, 1.0) if i == 0 else Color(1.0, 0.3, 0.25)
+		var c := Color(1.0, 0.3, 0.25) if i == 0 else Color(0.35, 0.55, 1.0)   # team 0 = RED
 		B.disc(sp + Vector3(0, 0.04, 0), 5.0, c.darkened(0.4), 0.3)
 		B.prop("sack_trench", sp + Vector3(-6, 0, (6.0 if sp.z < 0 else -6.0)), 0.0, 1.0, "box")
 		B.prop("sack_trench", sp + Vector3(6, 0, (6.0 if sp.z < 0 else -6.0)), 0.0, 1.0, "box")

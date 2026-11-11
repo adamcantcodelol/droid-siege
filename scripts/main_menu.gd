@@ -182,8 +182,10 @@ func _build_main(holder: Control) -> Control:
 	var solo_opt := OptionButton.new()
 	solo_opt.add_item("Solo: Droid Siege")
 	solo_opt.add_item("Solo: Horde Survival")
-	solo_opt.selected = 1 if int(Game.settings.get("mode", 0)) == Game.HORDE else 0
-	solo_opt.item_selected.connect(func(i): Game.settings["mode"] = Game.HORDE if i == 1 else 0; Game.write_save())
+	solo_opt.add_item("Solo: Hold the Line")
+	var solo_modes := [0, Game.HORDE, Game.HOLD]
+	solo_opt.selected = maxi(0, solo_modes.find(int(Game.settings.get("mode", 0))))
+	solo_opt.item_selected.connect(func(i): Game.settings["mode"] = solo_modes[i]; Game.write_save())
 	row.add_child(solo_opt)
 	var diff_opt := OptionButton.new()
 	for d in Game.DIFFICULTIES:

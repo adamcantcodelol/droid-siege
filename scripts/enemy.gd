@@ -100,11 +100,18 @@ func _ready() -> void:
 	net_rot = rotation.y
 
 
+static var _mats := {}
+
+
 func _mat(c: Color, metal: float = 0.3) -> StandardMaterial3D:
+	var key := "%s|%.2f" % [c.to_html(), metal]
+	if _mats.has(key):
+		return _mats[key]
 	var m := StandardMaterial3D.new()
 	m.albedo_color = c
 	m.metallic = metal
 	m.roughness = 0.5
+	_mats[key] = m
 	return m
 
 
@@ -202,6 +209,7 @@ func _build_model() -> void:
 			_box(Vector3(0.12, 0.12, 0.12), Vector3(0.0, 1.9, -0.35), Color(1.0, 0.15, 0.1))  # optic
 			muzzle.position = Vector3(0.7, 1.55, -0.95)
 	model.add_child(muzzle)
+	load("res://scripts/mech.gd").merge_meshes(model)
 	if etype == 4:
 		hp_label = Label3D.new()
 		hp_label.text = "ANTI-ARMOR"

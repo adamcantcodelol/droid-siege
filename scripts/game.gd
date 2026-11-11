@@ -5,7 +5,7 @@ const TrooperClass = preload("res://scripts/trooper_class.gd")
 const SAVE_PATH := "user://droid_siege_save.json"
 const DEFAULT_PORT := 7777
 const MAX_PLAYERS := 4
-const GAME_VERSION := "1.1"
+const GAME_VERSION := "1.2"
 const MAX_LEVEL := 5
 const GRENADE_COST := 100
 const MAX_GRENADES := 6
@@ -101,12 +101,31 @@ var control_mode := 0      # 0 = mouse + keyboard, 1 = trackpad / keyboard only
 var turn_speed := 2.6      # radians per second for keyboard turning
 var auto_fire := false
 var aim_assist := true
-const GAME_MODES := ["Co-op: Droid Siege (capture 3 posts)", "Versus: Team Deathmatch (1v1-2v2)", "Versus: Free-for-All", "Co-op: Horde Survival (4 min)"]
+const GAME_MODES := ["Co-op: Droid Siege (capture 3 posts)", "Versus: Team Deathmatch (1v1-2v2)", "Versus: Free-for-All", "Co-op: Horde Survival (4 min)",
+	"Versus: King of the Hill (hold the zone)", "Versus: Capture the Flag (first to 3)", "Co-op: Hold the Line (defend one post)"]
 const HORDE := 3
+const KOTH := 4
+const CTF := 5
+const HOLD := 6
 
 
 func is_versus_mode(m: int) -> bool:
-	return m == 1 or m == 2
+	return m in [1, 2, KOTH, CTF]
+
+
+## Rpc: the gunship lifts off with the listed troopers aboard (cinematic on every peer).
+@rpc("authority", "call_remote", "reliable")
+func extract_liftoff(ids: Array) -> void:
+	if world != null:
+		world.on_extract_liftoff(ids)
+
+
+## Rpc: CTF flag state. carriers = [red flag carrier pid, blue flag carrier pid] (0 = none),
+## positions of both flags (home or dropped).
+@rpc("authority", "call_remote", "unreliable_ordered")
+func flag_state(carriers: Vector2i, red_pos: Vector3, blue_pos: Vector3, koth_owner: int, koth_mask: int) -> void:
+	if world != null:
+		world.apply_flag_state(carriers, red_pos, blue_pos, koth_owner, koth_mask)
 const CONTROL_MODES := ["Mouse + Keyboard", "Trackpad / Keyboard Only"]
 var _test_start_ms := 0
 var _test_done := false
@@ -221,14 +240,28 @@ func apply_quality() -> void:
 	var q := quality()
 	var vp := get_viewport()
 	vp.scaling_3d_mode = Viewport.SCALING_3D_MODE_BILINEAR
-	vp.scaling_3d_scale = [0.7, 0.85, 1.0][q]
+	vp.scaling_3d_scale = render_scale(q)
 	vp.msaa_3d = Viewport.MSAA_2X if q == 2 else Viewport.MSAA_DISABLED
 	RenderingServer.directional_shadow_atlas_set_size([1024, 2048, 4096][q], true)
 	var CM = load("res://scripts/char_model.gd")
-	CM.anim_lod_far = [25.0, 35.0, 60.0][q]
+	CM.anim_lod_far = [20.0, 35.0, 60.0][q]
 	CM.anim_lod_every = [4, 3, 2][q]
+	CM.cull_dist = [85.0, 120.0, 0.0][q]
+	var cam := vp.get_camera_3d()
+	if cam != null:
+		cam.far = [140.0, 220.0, 400.0][q]
 	if world != null:
 		world.apply_quality(q)
+
+
+## 3D render scale. High-DPI screens (Surface Pro: 2880x1920 at 200%) make the browser canvas
+## huge, so Low/Medium target a fixed 3D pixel budget instead of a flat percentage.
+func render_scale(q: int) -> float:
+	var sz := Vector2(get_viewport().size)
+	var px := maxf(sz.x * sz.y, 1.0)
+	var budget: float = [640.0 * 400.0 * 1.6, 1280.0 * 720.0, 1920.0 * 1080.0][q]
+	var cap: float = [0.75, 0.9, 1.0][q]
+	return clampf(sqrt(budget / px), 0.35, cap)
 
 
 func is_headless() -> bool:
@@ -1226,7 +1259,17 @@ func _start_test() -> void:
 			if test_mode == "horde":
 				settings = {"map": 2, "diff": 1, "mode": HORDE}
 			start_singleplayer()
-		"bench0", "bench1", "bench2":
+		"hold":
+			player_name = "HoldTester"
+			settings = {"map": 0, "diff": 1, "mode": HOLD}
+			start_singleplayer()
+		"koth", "ctf":
+			player_name = "ModeTester"
+			settings = {"map": 0, "diff": 1, "mode": KOTH if test_mode == "koth" else CTF}
+			leave_network()
+			players = {1: {"name": player_name, "rank": 0, "cls": 0, "team": 0}}
+			start_mission()
+		"bench0", "bench1", "bench2", "bench3", "bench4", "bench5":
 			player_name = "Bench"
 			settings = {"map": int(test_mode.right(1)), "diff": 1, "mode": 0}
 			start_singleplayer()
