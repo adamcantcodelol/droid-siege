@@ -5,7 +5,7 @@ const TrooperClass = preload("res://scripts/trooper_class.gd")
 const SAVE_PATH := "user://droid_siege_save.json"
 const DEFAULT_PORT := 7777
 const MAX_PLAYERS := 4
-const GAME_VERSION := "1.2"
+const GAME_VERSION := "1.2.1"
 const MAX_LEVEL := 5
 const GRENADE_COST := 100
 const MAX_GRENADES := 6
@@ -1161,6 +1161,8 @@ func mech_exit(i: int, pos: Vector3, ry: float) -> void:
 func bolt_fx(from: Vector3, to: Vector3, kind: int) -> void:
 	if world != null:
 		world.spawn_bolt(from, to, kind)
+		if kind != 1 and kind != 3:
+			world.player_bolt(from, to)
 
 
 @rpc("any_peer", "call_remote", "reliable")
@@ -1284,13 +1286,15 @@ func mission_end(win: bool, credits: int, kills: int) -> void:
 # ---------------------------------------------------------------- headless test harness
 func _start_test() -> void:
 	match test_mode:
-		"smoke", "smoke2", "smokefail", "walkcap", "kbtest", "weapons", "hitbox", "camview", "horde", "mech", "walls", "antitank", "classes":
+		"smoke", "smoke2", "smokefail", "walkcap", "kbtest", "weapons", "hitbox", "camview", "horde", "mech", "walls", "antitank", "classes", "commando":
 			player_name = "SmokeTester"
 			control_mode = 1 if test_mode == "kbtest" else 0
 			aim_assist = true
 			settings = {"map": 1, "diff": 2, "mode": 0} if test_mode == "smoke2" else {"map": 0, "diff": 1, "mode": 0}
 			if test_mode == "horde":
 				settings = {"map": 2, "diff": 1, "mode": HORDE}
+			if test_mode == "commando":
+				settings = {"map": 0, "diff": 3, "mode": 0}
 			start_singleplayer()
 		"hold":
 			player_name = "HoldTester"

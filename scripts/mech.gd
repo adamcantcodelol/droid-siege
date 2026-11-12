@@ -5,14 +5,14 @@
 ## build(vtype) returns a Node3D visual. Stats live in VEHICLES[].
 
 const VEHICLES := [
-	{"name": "AT-RT Walker", "hp": 220.0, "speed": 9.5, "boost": 13.5, "dmg": 1.45, "interval": 0.38,
+	{"name": "AT-RT Walker", "hp": 220.0, "speed": 9.5, "boost": 13.5, "dmg": 2.5, "interval": 0.38,
 		"heat_max": 1.0, "heat_rate": 0.22, "heat_cool": 0.55, "cam_y": 5.0, "cam_x": 1.4, "size": Vector3(1.6, 3.0, 1.8), "col_y": 2.1},
-	{"name": "BARC Speeder", "hp": 130.0, "speed": 17.5, "boost": 24.0, "dmg": 0.85, "interval": 0.17,
+	{"name": "BARC Speeder", "hp": 130.0, "speed": 17.5, "boost": 24.0, "dmg": 1.45, "interval": 0.17,
 		"heat_max": 1.0, "heat_rate": 0.12, "heat_cool": 0.7, "cam_y": 2.4, "cam_x": 1.0, "size": Vector3(1.2, 1.2, 2.4), "col_y": 0.9},
-	{"name": "TX-130 Saber Tank", "hp": 320.0, "speed": 9.8, "boost": 13.5, "dmg": 1.6, "interval": 0.48,
-		"heat_max": 1.0, "heat_rate": 0.18, "heat_cool": 0.5, "shell_cd": 6.0, "shell_dmg": 45.0, "shell_r": 4.5,
+	{"name": "TX-130 Saber Tank", "hp": 320.0, "speed": 9.8, "boost": 13.5, "dmg": 2.7, "interval": 0.48,
+		"heat_max": 1.0, "heat_rate": 0.18, "heat_cool": 0.5, "shell_cd": 6.0, "shell_dmg": 75.0, "shell_r": 4.5,
 		"cam_y": 4.2, "cam_x": 1.6, "size": Vector3(2.8, 2.2, 3.6), "col_y": 1.3},
-	{"name": "ISP Swamp Speeder", "hp": 200.0, "speed": 13.5, "boost": 18.5, "dmg": 1.05, "interval": 0.22,
+	{"name": "ISP Swamp Speeder", "hp": 200.0, "speed": 13.5, "boost": 18.5, "dmg": 1.8, "interval": 0.22,
 		"heat_max": 1.0, "heat_rate": 0.14, "heat_cool": 0.65, "cam_y": 3.2, "cam_x": 1.3, "size": Vector3(2.4, 1.6, 3.0), "col_y": 1.0},
 ]
 

@@ -145,7 +145,7 @@ func _ready() -> void:
 		phase = 2
 	LZ = M["lz"]
 	gs_dir = Vector3(LZ.x, 0, LZ.z).normalized() if Vector2(LZ.x, LZ.z).length() > 1.0 else Vector3(0, 0, 1)
-	if Game.test_mode in ["smoke", "smoke2", "smokefail", "walkcap", "kbtest", "weapons", "hitbox", "camview", "horde", "mech", "walls", "antitank", "classes", "hold", "koth", "ctf"]:
+	if Game.test_mode in ["smoke", "smoke2", "smokefail", "walkcap", "kbtest", "weapons", "hitbox", "camview", "horde", "mech", "walls", "antitank", "classes", "hold", "koth", "ctf", "commando"]:
 		test_speed = 4.0
 		Engine.time_scale = 3.0
 	players_root = _child_node("Players")
@@ -1073,8 +1073,25 @@ func commander_near(pos: Vector3) -> bool:
 	return false
 
 
+## BX commandos: only on the hardest difficulty, from phase 1, capped (2 solo, +1 per extra trooper, max 4).
+func commando_cap() -> int:
+	if int(DIFF.get("ai", 1)) < 3:
+		return 0
+	return mini(4, 2 + maxi(0, players.size() - 1))
+
+
+func commando_count() -> int:
+	var n := 0
+	for e in enemies.values():
+		if e.etype == EnemyScript.COMMANDO and not e.dead:
+			n += 1
+	return n
+
+
 func _pick_type() -> int:
 	var r := rng.randf()
+	if phase >= 1 and r < 0.12 and commando_count() < commando_cap():
+		return EnemyScript.COMMANDO
 	if phase >= 1 and r < 0.08:
 		var has_cmd := false
 		for e in enemies.values():
@@ -1174,6 +1191,22 @@ func enemy_fire(e, target, dist: float) -> void:
 	if hit:
 		var solo := 0.8 if players.size() == 1 else 1.0
 		Game.net_peer(target.peer_id, "hit_player", [float(e.stats["dmg"]) * solo * (1.25 if e.buffed else 1.0), from, 0])
+
+
+## Server: commando vibroblade strike.
+func commando_melee(e, target) -> void:
+	Game.net_all("bolt_fx", [e.global_position + Vector3(0, 1.1, 0), target.global_position + Vector3(0, 1.1, 0), 3])
+	Game.net_peer(target.peer_id, "hit_player", [float(e.stats["melee"]), e.global_position, 0])
+	_t_melee_hits += 1
+
+
+## Server: a trooper's bolt flew from->to; commandos near the line react (near-miss dodge).
+func player_bolt(from: Vector3, to: Vector3) -> void:
+	if not multiplayer.is_server():
+		return
+	for e in enemies.values():
+		if e.etype == EnemyScript.COMMANDO and not e.dead:
+			e.near_miss(from, to)
 
 
 func micro_splash(pos: Vector3, shooter: int, dmg: float, radius: float) -> void:
@@ -1362,7 +1395,7 @@ func on_enemy_died(eid: int, pos: Vector3, killer: int = 0, etype: int = 0) -> v
 
 
 func _spawn_debris(pos: Vector3, etype: int) -> void:
-	var col: Color = [Color(0.78, 0.68, 0.48), Color(0.3, 0.33, 0.4), Color(0.55, 0.4, 0.25), Color(0.92, 0.75, 0.2), Color(0.45, 0.1, 0.1)][clampi(etype, 0, 4)]
+	var col: Color = [Color(0.78, 0.68, 0.48), Color(0.3, 0.33, 0.4), Color(0.55, 0.4, 0.25), Color(0.92, 0.75, 0.2), Color(0.45, 0.1, 0.1), Color(0.95, 0.45, 0.1)][clampi(etype, 0, 5)]
 	if _debris_mesh == null:
 		_debris_mesh = BoxMesh.new()
 		_debris_mesh.size = Vector3(0.2, 0.2, 0.28)
@@ -1878,7 +1911,7 @@ func _test_autopilot(delta: float) -> void:
 	if Game.test_mode == "pvp_bidir_server":
 		_test_pvp_bidir_server(delta)
 		return
-	if Game.test_mode not in ["smoke", "smoke2", "smokefail", "walkcap", "kbtest", "weapons", "hitbox", "camview", "horde", "mech", "walls", "antitank", "classes", "hold", "koth", "ctf"]:
+	if Game.test_mode not in ["smoke", "smoke2", "smokefail", "walkcap", "kbtest", "weapons", "hitbox", "camview", "horde", "mech", "walls", "antitank", "classes", "hold", "koth", "ctf", "commando"]:
 		return
 	test_elapsed += delta
 	var lp = local_player()
@@ -1899,6 +1932,11 @@ func _test_autopilot(delta: float) -> void:
 	if Game.test_mode == "antitank" and _t_stage == 0:
 		_t_stage = 1
 		_test_antitank(lp)
+	if Game.test_mode == "commando" and _t_stage == 0:
+		_t_stage = 1
+		_test_commando(lp)
+	if Game.test_mode == "commando":
+		return
 	if Game.test_mode == "classes" and _t_stage == 0:
 		_t_stage = 1
 		_test_classes(lp)
@@ -2626,6 +2664,111 @@ func _test_walls(lp) -> void:
 	lp.god = true
 	print("[test] walls: player_blocked=%s enemy_blocked=%s ehp %.0f->%.0f" % [blocked_ok, enemy_blocked, hp0, e.hp])
 	Game.finish_test(blocked_ok and enemy_blocked, "WALLS stop bullets both ways")
+
+
+var _t_melee_hits := 0
+
+
+func _face(lp, pos: Vector3) -> void:
+	var d: Vector3 = pos - (lp.global_position + Vector3(0, 1.6, 0))
+	lp.rotation.y = atan2(-d.x, -d.z)
+	lp.pitch = atan2(d.y, Vector2(d.x, d.z).length())
+
+
+func _test_commando(lp) -> void:
+	spawn_cd = 9999.0
+	lp.god = true
+	for id in enemies.keys():
+		enemies[id].queue_free()
+	enemies.clear()
+	phase = 2
+	var fails := []
+	# 1) Spawn gating: never below the hardest difficulty, sometimes on it, capped.
+	DIFF = Game.DIFFICULTIES[2]
+	var lo := 0
+	for i in 600:
+		if _pick_type() == EnemyScript.COMMANDO:
+			lo += 1
+	DIFF = Game.DIFFICULTIES[3]
+	var hi := 0
+	for i in 600:
+		if _pick_type() == EnemyScript.COMMANDO:
+			hi += 1
+	if lo != 0 or hi == 0:
+		fails.append("gating lo=%d hi=%d" % [lo, hi])
+	var fwd: Vector3 = -lp.global_transform.basis.z
+	fwd.y = 0.0
+	fwd = fwd.normalized()
+	var base: Vector3 = lp.global_position
+	var a = _create_enemy(9001, 5, base + fwd * 14.0 + Vector3(0, 0.3, 0))
+	var b = _create_enemy(9002, 5, base - fwd * 14.0 + Vector3(0, 0.3, 0))
+	var full := commando_count() >= commando_cap()
+	var capped := true
+	for i in 300:
+		if full and _pick_type() == EnemyScript.COMMANDO:
+			capped = false
+	if not capped:
+		fails.append("cap")
+	if a.hp < 400.0 or a.max_shield < 120.0:
+		fails.append("stats hp=%d" % a.hp)
+	var draws := 0
+	for mi in a.model.find_children("*", "MeshInstance3D", true, false):
+		draws += maxi(1, mi.mesh.get_surface_count() if mi.mesh != null else 1)
+	if draws > 5:
+		fails.append("draws=%d" % draws)
+	for e in [a, b]:
+		e.leap_cd = 999.0
+		e.melee_cd = 999.0
+	for i in 10:
+		await get_tree().physics_frame
+	# 2) Aim dodge: point the trooper at A and hold it there.
+	var t0 := Time.get_ticks_msec()
+	while a.dodges == 0 and Time.get_ticks_msec() - t0 < 4000:
+		_face(lp, a.global_position + Vector3(0, 1.1, 0))
+		await get_tree().physics_frame
+	if a.dodges == 0:
+		fails.append("no aim dodge")
+	# 3) Near miss: B is behind the trooper (not aimed at); a bolt grazes it.
+	_face(lp, a.global_position + Vector3(0, 1.1, 0))
+	var bc: Vector3 = b.global_position + Vector3(0, 1.0, 0)
+	var side: Vector3 = fwd.cross(Vector3.UP) * 1.2
+	b.dodge_cd = 0.0
+	var bd0: int = b.dodges
+	player_bolt(lp.global_position + Vector3(0, 1.5, 0), bc + side + (bc - lp.global_position).normalized() * 10.0)
+	t0 = Time.get_ticks_msec()
+	while b.dodges == bd0 and Time.get_ticks_msec() - t0 < 1500:
+		await get_tree().physics_frame
+	if b.dodges == bd0:
+		fails.append("no near-miss dodge")
+	# 4) Net sync of act/cloak/side through the state packet.
+	a.act = a.Act.FLIP
+	a.cloak_t = 2.0
+	a.act_side = -1.0
+	var pk: PackedFloat32Array = a.pack_state()
+	a.act = 0
+	a.cloak_t = 0.0
+	a.act_side = 1.0
+	a.apply_state(pk, 0)
+	if a.act != a.Act.FLIP or a.cloak_t <= 0.0 or a.act_side > 0.0:
+		fails.append("sync")
+	a.cloak_t = 0.0
+	a.act = 0
+	# 5) Melee: commando right next to the trooper strikes with the vibroblade.
+	b.queue_free()
+	enemies.erase(9002)
+	a.global_position = lp.global_position + fwd * 1.6
+	a.velocity = Vector3.ZERO
+	a.melee_cd = 0.0
+	a.dodge_cd = 999.0
+	t0 = Time.get_ticks_msec()
+	while _t_melee_hits == 0 and Time.get_ticks_msec() - t0 < 3000:
+		a.dodge_cd = 999.0
+		a.global_position = lp.global_position + fwd * 1.6 if a.act == 0 else a.global_position
+		await get_tree().physics_frame
+	if _t_melee_hits == 0:
+		fails.append("no melee")
+	print("[test] commando: lo=%d hi=%d capped=%s draws=%d hp=%d dodges=%d/%d melee=%d %s" % [lo, hi, capped, draws, int(a.hp), a.dodges, b.dodges if is_instance_valid(b) else -1, _t_melee_hits, fails])
+	Game.finish_test(fails.is_empty(), "COMMANDO gating/cap/dodge/near-miss/sync/melee")
 
 
 func _test_antitank(lp) -> void:

@@ -656,6 +656,8 @@ func _shoot_mech() -> void:
 	var to: Vector3 = hit["pos"]
 	Game.world.spawn_bolt(from, to, 0)
 	Game.net_all("bolt_fx", [from, to, 0], false)
+	if Game.world != null:
+		Game.world.player_bolt(from, to)
 	Game.play_sfx("scatter", null, -4.0)
 	var dmg := Game.weapon_damage(0) * float(st.get("dmg", 1.0))
 	_apply_hit(hit["collider"], dmg, "vehicle", {}, to)
@@ -666,7 +668,7 @@ func _fire_tank_shell() -> void:
 	veh_shell_cd = float(st.get("shell_cd", 6.0))
 	var aim := _aim_point()
 	var to: Vector3 = aim["pos"]
-	Game.net_server("req_micro_splash", [to, float(st.get("shell_dmg", 45.0)), float(st.get("shell_r", 4.5))])
+	Game.net_server("req_micro_splash", [to, float(st.get("shell_dmg", 75.0)), float(st.get("shell_r", 4.5))])
 	Game.play_sfx("explosion", to, -6.0)
 
 
@@ -988,6 +990,8 @@ func _shoot() -> void:
 	var bolt_k: int = int(w.get("bolt", 0))
 	Game.world.spawn_bolt(from, to, bolt_k)
 	Game.net_all("bolt_fx", [from, to, bolt_k], false)
+	if Game.world != null:
+		Game.world.player_bolt(from, to)
 	var dmg := Game.weapon_damage(weapon) * _dmg_aura_mult()
 	var col = hit["collider"]
 	_apply_hit(col, dmg, kind, w, to)
@@ -1064,6 +1068,8 @@ func _shoot_scatter() -> void:
 		if i % 2 == 0:
 			Game.world.spawn_bolt(hit["from"], hit["pos"], int(w.get("bolt", 2)))
 			Game.net_all("bolt_fx", [hit["from"], hit["pos"], int(w.get("bolt", 2))], false)
+			if Game.world != null:
+				Game.world.player_bolt(hit["from"], hit["pos"])
 		var c = hit["collider"]
 		if c != null:
 			var falloff := clampf(1.25 - barrel.distance_to(hit["pos"]) / rng, 0.35, 1.0)

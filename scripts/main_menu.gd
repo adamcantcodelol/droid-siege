@@ -183,6 +183,12 @@ func _build_main(holder: Control) -> Control:
 	solo_opt.add_item("Solo: Droid Siege")
 	solo_opt.add_item("Solo: Horde Survival")
 	solo_opt.add_item("Solo: Hold the Line")
+	# Versus modes need other troopers: listed so they're discoverable, picked in the Multiplayer lobby.
+	solo_opt.add_item("King of the Hill: Multiplayer > Host")
+	solo_opt.add_item("Capture the Flag: Multiplayer > Host")
+	solo_opt.set_item_disabled(3, true)
+	solo_opt.set_item_disabled(4, true)
+	solo_opt.tooltip_text = "King of the Hill, Capture the Flag, Team Deathmatch and Free-for-All: host a room in Multiplayer and pick the Mode in the lobby."
 	var solo_modes := [0, Game.HORDE, Game.HOLD]
 	solo_opt.selected = maxi(0, solo_modes.find(int(Game.settings.get("mode", 0))))
 	solo_opt.item_selected.connect(func(i): Game.settings["mode"] = solo_modes[i]; Game.write_save())
@@ -339,6 +345,7 @@ func _build_lobby(holder: Control) -> Control:
 	mode_opt.selected = int(Game.settings.get("mode", 0))
 	mode_opt.item_selected.connect(func(i): Game.settings["mode"] = i; Game.write_save())
 	mrow.add_child(mode_opt)
+	box.move_child(mrow, lobby_info.get_index())   # mode picker right under the squad list, never below the fold
 	start_btn = _btn(box, "Start Mission", func(): Game.write_save(); Game.start_mission())
 	_btn(box, "Leave", func(): Game.leave_network(); _show("mp"))
 	return box
@@ -484,7 +491,7 @@ func _refresh_lobby() -> void:
 	start_btn.visible = is_host or (Game.server_is_dedicated and Game.online)
 	mode_opt.get_parent().visible = start_btn.visible
 	if is_host and Game.room_code != "":
-		lobby_info.text = "ROOM CODE:  %s\nYour friends: Multiplayer > type the code > Join with Code." % Game.room_code
+		lobby_info.text = "ROOM CODE:  %s\nYour friends: Multiplayer > type the code > Join with Code.\nPick the Mode below (King of the Hill, Capture the Flag, ...)." % Game.room_code
 		lobby_info.add_theme_font_size_override("font_size", 20)
 	elif is_host:
 		var ips := PackedStringArray()
@@ -495,4 +502,4 @@ func _refresh_lobby() -> void:
 	elif Game.server_is_dedicated:
 		lobby_info.text = "Online server. Any trooper can press Start Mission (uses your map/difficulty choice)."
 	else:
-		lobby_info.text = "Waiting for the host to start the mission..."
+		lobby_info.text = "Waiting for the host to start the mission...\nThe host picks the mode (Siege, Horde, Hold the Line, TDM, FFA, King of the Hill, Capture the Flag)."
