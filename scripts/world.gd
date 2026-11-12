@@ -507,7 +507,7 @@ func _tick_vehicles(delta: float) -> void:
 		_tick_lava(delta)
 	if builder != null and not builder.geysers.is_empty():
 		_tick_geysers(delta)
-	if M.get("layout", "") == "kamino" and not Game.is_headless():
+	if M.get("layout", "") == "kamino" and not Game.is_headless() and not low_fx:   # Low: no lightning flashes
 		_tick_lightning(delta)
 
 
@@ -672,7 +672,7 @@ func _tick_geysers(delta: float) -> void:
 			var k: float = (t - 7.8) / 2.2
 			var hgt: float = 9.0 * sin(k * PI) + 1.0
 			col.visible = true
-			col.scale = Vector3(1.0 + 0.1 * sin(map_time * 30.0), hgt, 1.0 + 0.1 * cos(map_time * 27.0))
+			col.scale = Vector3(1.0, hgt, 1.0) if low_fx else Vector3(1.0 + 0.1 * sin(map_time * 30.0), hgt, 1.0 + 0.1 * cos(map_time * 27.0))
 			col.position = g["pos"] + Vector3(0, hgt / 2.0, 0)
 		else:
 			col.visible = false
@@ -1143,7 +1143,7 @@ func _spawn_enemy() -> void:
 		pos = cands[rng.randi() % cands.size()] + Vector3(rng.randf_range(-3, 3), 0, rng.randf_range(-3, 3))
 	elif nav_polys > 0:
 		pos = NavigationServer3D.map_get_closest_point(get_world_3d().navigation_map, pos)
-	pos.y = 0.5
+	pos.y = maxf(pos.y, 0.0) + 0.5   # v1.3 terrain: nav point may be on a hill
 	var id := next_enemy_id
 	next_enemy_id += 1
 	_create_enemy(id, _pick_type(), pos)
@@ -2180,6 +2180,10 @@ func _test_mapcheck() -> void:
 		starts["post%d" % i] = POSTS[i] + Vector3(3, 0, 0)
 	for i in builder.rooms.size():
 		starts["room%d" % i] = builder.rooms[i]
+	for i in builder.decks.size():
+		starts["deck%d" % i] = builder.decks[i]
+	if builder.decks.size() < 4:
+		fails.append("only %d terrain pieces" % builder.decks.size())
 	for key in starts:
 		var p: Vector3 = starts[key]
 		q.transform = Transform3D(Basis(), p + Vector3(0, 1.0, 0))
@@ -2221,7 +2225,7 @@ func _test_mapcheck() -> void:
 		print("[test] geyser: hp %.1f -> %.1f, column visible=%s" % [hp0, lp.health, g0["col"].visible])
 		if not (lp.health < hp0 and g0["col"].visible):
 			fails.append("geyser did not erupt/burn")
-	print("[test] mapcheck %s: nav polys=%d, %d start points (%d rooms), %d multimesh batches, %d prop tris, lava=%d, fails=%s" % [M["name"], nav_polys, starts.size(), builder.rooms.size(), mm, tris, builder.lava_rects.size(), fails])
+	print("[test] mapcheck %s: nav polys=%d, %d start points (%d rooms), %d multimesh batches, %d prop tris, lava=%d, decks=%d, fails=%s" % [M["name"], nav_polys, starts.size(), builder.rooms.size(), mm, tris, builder.lava_rects.size(), builder.decks.size(), fails])
 	Game.finish_test(nav_polys > 100 and fails.is_empty() and builder.rooms.size() >= 4, "MAPCHECK %s" % M["name"])
 
 
@@ -2287,7 +2291,10 @@ func _bench() -> void:
 		var d := 20.0 + float(i % 4) * 8.0
 		var dir: Vector3 = (POSTS[0] - LZ).normalized().rotated(Vector3.UP, a)
 		var pos: Vector3 = NavigationServer3D.map_get_closest_point(get_world_3d().navigation_map, LZ + dir * d)
-		_create_enemy(next_enemy_id, [0, 0, 1, 3, 0, 2][i % 6], pos + Vector3(0, 0.5, 0))
+		var et: int = [0, 0, 1, 3, 0, 2][i % 6]
+		if OS.get_environment("DS_ETYPE") != "":
+			et = int(OS.get_environment("DS_ETYPE"))
+		_create_enemy(next_enemy_id, et, pos + Vector3(0, 0.5, 0))
 		next_enemy_id += 1
 	await get_tree().create_timer(1.0).timeout
 	if OS.get_environment("DS_GUNSHIP") != "":
@@ -2299,6 +2306,16 @@ func _bench() -> void:
 		c.global_position = LZ + Vector3(14, 6, -10)
 		c.look_at(LZ + Vector3(0, 2, 0))
 		c.current = true
+		await get_tree().create_timer(0.5).timeout
+	if OS.get_environment("DS_ETYPE") != "" and not enemies.is_empty():
+		var e0 = enemies.values()[0]
+		e0.set_physics_process(false)
+		var c2 := Camera3D.new()
+		add_child(c2)
+		var f0: Vector3 = -e0.global_transform.basis.z
+		c2.global_position = e0.global_position - f0 * 4.0 + e0.global_transform.basis.x * 1.0 + Vector3(0, 1.4, 0)
+		c2.look_at(e0.global_position + Vector3(0, 1.2, 0))
+		c2.current = true
 		await get_tree().create_timer(0.5).timeout
 	if OS.get_environment("DS_CAM") != "":
 		var v := OS.get_environment("DS_CAM").split_floats(",")
@@ -2342,14 +2359,16 @@ func _bench_sample(label: String, secs: float = 3.0) -> void:
 	var t0 := Time.get_ticks_usec()
 	var n := 0
 	var dc := 0.0
+	var pr := 0.0
 	await get_tree().process_frame
 	t0 = Time.get_ticks_usec()
 	while Time.get_ticks_usec() - t0 < int(secs * 1000000):
 		await get_tree().process_frame
 		n += 1
 		dc += Performance.get_monitor(Performance.RENDER_TOTAL_DRAW_CALLS_IN_FRAME)
+		pr += Performance.get_monitor(Performance.RENDER_TOTAL_PRIMITIVES_IN_FRAME)
 	var ms := (Time.get_ticks_usec() - t0) / 1000.0 / n
-	print("[prof] %-28s %.1fms fps=%.1f dc=%.0f" % [label, ms, 1000.0 / ms, dc / n])
+	print("[prof] %-28s %.1fms fps=%.1f dc=%.0f prims=%.0f" % [label, ms, 1000.0 / ms, dc / n, pr / n])
 
 
 func _bench_profile() -> void:
@@ -2368,6 +2387,14 @@ func _bench_profile() -> void:
 	await _bench_sample("no enemies")
 	players_root.visible = false
 	await _bench_sample("no players")
+	for n in builder.deco.get_children():
+		if String(n.name).begins_with("MM_mountain") or String(n.name).begins_with("MM_rock_formation"):
+			n.visible = false
+	await _bench_sample("no mountains")
+	for n in builder.deco.get_children():
+		if n is MultiMeshInstance3D:
+			n.visible = false
+	await _bench_sample("no multimesh")
 	builder.deco.visible = false
 	await _bench_sample("no deco")
 	nav_region.visible = false
@@ -2395,6 +2422,8 @@ func apply_quality(q: int) -> void:
 		l.distance_fade_begin = [20.0, 30.0, 60.0][q]
 	if rain != null:
 		rain.amount = [150, 300, 600][q]
+		rain.visible = q > 0      # Low: no rain particles
+		rain.emitting = q > 0
 	if builder != null:
 		for n in builder.deco.get_children():
 			if n is MultiMeshInstance3D:

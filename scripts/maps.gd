@@ -35,6 +35,8 @@ func build(builder, m: Dictionary) -> void:
 			_mustafar()
 		_:
 			_geonosis()
+	_terrain(String(M.get("layout", "geonosis")))
+	_dress(String(M.get("layout", "geonosis")))
 	for i in M["posts"].size():
 		B.post_ring(M["posts"][i], 7.0, M.get("post_col", Color(0.62, 0.62, 0.66)))
 	_lz_pad()
@@ -518,3 +520,105 @@ func _mustafar() -> void:
 	_scatter("barrel", 16, Rect2(-70, -70, 140, 140), 1.1, 1.3, "cyl", Color.WHITE, [], 0.45)
 	_scatter("crate", 12, Rect2(-70, -70, 140, 140), 1.0, 1.2, "box")
 	_scatter("rock_large", 8, Rect2(-85, -85, 170, 170), 2.0, 3.8, "box", Color(0.4, 0.2, 0.12), [])
+
+
+# ======================================================================= v1.3 terrain + dressing
+## Free footprint for a terrain piece of radius rad (keeps lanes, objectives, rooms, droid entries,
+## lava and existing structures clear).
+func _fits(p: Vector3, rad: float) -> bool:
+	if absf(p.x) > 84.0 - rad or absf(p.z) > 84.0 - rad:
+		return false
+	if not _clear(p, rad + 2.0):
+		return false
+	for c in rooms_keep:
+		if Vector2(p.x - c.x, p.z - c.z).length() < rad + 13.0:
+			return false
+	for c in B.spawn_points:
+		if Vector2(p.x - c.x, p.z - c.z).length() < rad + 7.0:
+			return false
+	for k in 9:
+		var a := TAU * float(k) / 8.0
+		var q: Vector3 = p + (Vector3(sin(a), 0, cos(a)) * (rad + 3.0) if k < 8 else Vector3.ZERO)
+		if B.in_lava(q):
+			return false
+	for b in B.parent.get_children():
+		if b is StaticBody3D and (b as Node3D).position.y > 0.05:
+			var bp: Vector3 = (b as Node3D).position
+			if Vector2(p.x - bp.x, p.z - bp.z).length() < rad + 2.5:
+				return false
+	return true
+
+
+func _try_place(n: int, rmin: float, rmax: float, fn: Callable) -> int:
+	var placed := 0
+	var tries := 0
+	while placed < n and tries < n * 40:
+		tries += 1
+		var rad := r.randf_range(rmin, rmax)
+		var p := Vector3(r.randf_range(-80, 80), 0, r.randf_range(-80, 80))
+		if _fits(p, rad):
+			fn.call(p, rad)
+			placed += 1
+	return placed
+
+
+var terrain_pieces := 0
+
+
+## Elevation: walkable hills/ridges, raised platforms with ramps and planet landmarks.
+func _terrain(layout: String) -> void:
+	var rock: Color = M.get("rock", Color(0.4, 0.35, 0.3))
+	var cliff: Color = M.get("cliff", rock.darkened(0.2))
+	var metal := Color(0.32, 0.33, 0.36)
+	var hill_fn := func(p: Vector3, rad: float) -> void:
+		var h := clampf(rad * 0.32, 1.6, 4.2)
+		var st := r.randf_range(1.0, 2.2)    # stretched into ridges
+		B.hill(p, rad, maxf(1.5, rad - h * 1.7), h, rock if r.randf() < 0.6 else cliff, 1.0, st, r.randf() * TAU)
+		terrain_pieces += 1
+	var plat_fn := func(p: Vector3, rad: float) -> void:
+		var sides := [0, 1] if r.randf() < 0.5 else [2, 3]
+		B.platform(p, Vector3(rad, r.randf_range(2.4, 3.6), rad), metal if layout in ["mustafar", "kamino", "umbara"] else cliff, sides, Color(0, 0, 0, 0), layout in ["kamino", "mustafar"])
+		terrain_pieces += 1
+	match layout:
+		"kamino":
+			_try_place(5, 7.0, 10.0, plat_fn)       # stilted platforms
+		"mustafar":
+			_try_place(4, 7.0, 9.0, plat_fn)        # refinery decks
+			_try_place(4, 6.0, 9.0, hill_fn)        # basalt mounds
+		"christophsis", "umbara":
+			_try_place(3, 7.0, 9.0, plat_fn)
+			_try_place(6, 7.0, 11.0, hill_fn)
+		_:
+			_try_place(8, 7.0, 12.0, hill_fn)
+			_try_place(2, 7.0, 9.0, plat_fn)
+	if layout == "geonosis":
+		# termite-mound spires (collision cylinders)
+		_try_place(5, 2.0, 3.0, func(p: Vector3, rad: float) -> void:
+			B.cyl(p, rad, rad * 0.25, r.randf_range(12.0, 20.0), rock.lightened(0.05), true, 7)
+			terrain_pieces += 1)
+
+
+## Visual-only dressing that scales with the graphics preset (none extra on Low).
+func _dress(layout: String) -> void:
+	var q: int = B.q
+	if q == 0:
+		return
+	var mul := 1 if q == 1 else 2
+	var rect := Rect2(-88, -88, 176, 176)
+	var tint := Color(1.0, 1.0, 1.0)
+	match layout:
+		"felucia":
+			_scatter("plant", 30 * mul, rect, 0.8, 1.6, "none", Color(0.9, 1.1, 0.9))
+			_scatter("mushroom", 10 * mul, rect, 0.6, 1.4, "none", Color(1.0, 0.9, 1.1))
+		"kamino":
+			_scatter("light_floor", 8 * mul, rect, 0.5, 0.5, "none")
+		"mustafar":
+			_scatter("rock", 20 * mul, rect, 0.4, 0.9, "none", Color(0.6, 0.45, 0.4))
+			_scatter("pipes", 3 * mul, rect, 1.0, 1.0, "none")
+		_:
+			_scatter("rock", 24 * mul, rect, 0.3, 0.8, "none", tint)
+			_scatter("plant", 10 * mul, rect, 0.5, 1.0, "none", Color(0.9, 0.8, 0.6))
+	if q == 2:
+		# High: a few extra coloured lights around the posts
+		for c in M["posts"]:
+			B.light(c + Vector3(0, 4, 0), M.get("lz_glow", Color(1, 0.8, 0.5)), 0.8, 14.0)

@@ -19,6 +19,12 @@ var sun: DirectionalLight3D
 var env: Environment
 const SMALL := ["plant", "crate", "barrel", "light_floor", "sack_trench", "rock"]
 const CHUNK := 48.0
+## Graphics preset at build time: 0 Low, 1 Medium, 2 High. Only visual-only dressing depends on it;
+## anything with collision is identical on every peer.
+var q := 1
+var _low_skip := 0
+var decks: Array = []          # v1.3: tops of hills/platforms (mapcheck: must be reachable on foot)
+const KEEP_LOW := ["mountain_group", "gunship", "antenna", "turret_cannon", "landing_pad", "base", "container_structure"]
 
 
 func _init(world: Node, region: Node3D) -> void:
@@ -27,6 +33,7 @@ func _init(world: Node, region: Node3D) -> void:
 	deco = Node3D.new()
 	deco.name = "Props"
 	world.add_child(deco)
+	q = Game.quality()
 
 
 # ------------------------------------------------------------------ primitives
@@ -197,7 +204,12 @@ func prop(name: String, pos: Vector3, yaw: float = 0.0, height: float = 0.0, col
 	# sit the model's bottom on pos.y
 	var c0 := aabb.get_center()
 	var xf := Transform3D(basis, pos - basis * Vector3(c0.x, aabb.position.y, c0.z))
-	var cell := Vector2i(floori(pos.x / CHUNK), floori(pos.z / CHUNK))
+	if collide == "none" and q == 0 and not (name in KEEP_LOW):
+		_low_skip += 1
+		if _low_skip % 2 == 1:
+			return   # Low: half the purely decorative props
+	var ch := CHUNK * (2.0 if q == 0 else 1.0)   # Low: bigger batches = fewer draw calls
+	var cell := Vector2i(floori(pos.x / ch), floori(pos.z / ch))
 	var key := name + "|" + tint.to_html() + "|" + str(cell)
 	if not _batches.has(key):
 		_batches[key] = {"name": name, "tint": tint, "xforms": []}
@@ -238,6 +250,8 @@ func flush(vis_end: float = 0.0) -> void:
 					mmi.material_override = m2
 			if vis_end > 0.0:
 				mmi.visibility_range_end = vis_end
+			elif q == 0 and bt["name"] in SMALL:
+				mmi.visibility_range_end = 60.0   # Low: small clutter fades out past 60 m
 			deco.add_child(mmi)
 	_batches.clear()
 
@@ -261,7 +275,8 @@ func merge_static() -> int:
 			if m is BaseMaterial3D and (m as BaseMaterial3D).transparency != BaseMaterial3D.TRANSPARENCY_DISABLED:
 				continue
 			var xf: Transform3D = (b as Node3D).transform * mi.transform
-			var cell := Vector2i(floori(xf.origin.x / CHUNK), floori(xf.origin.z / CHUNK))
+			var ch := CHUNK * (2.0 if q == 0 else 1.0)
+			var cell := Vector2i(floori(xf.origin.x / ch), floori(xf.origin.z / ch))
 			var key := [m, cell]
 			if not groups.has(key):
 				groups[key] = []
@@ -360,7 +375,18 @@ func building(c: Vector3, yaw: float, w: float, d: float, color: Color, accent: 
 static var _lava_shader: Shader
 
 
-static func lava_material(flow: Vector2, size: Vector2) -> ShaderMaterial:
+static var _lava_low: StandardMaterial3D = null
+
+
+static func lava_material(flow: Vector2, size: Vector2) -> Material:
+	if Game.quality() == 0:
+		# Low: static, unshaded, no per-pixel noise or scrolling
+		if _lava_low == null:
+			_lava_low = StandardMaterial3D.new()
+			_lava_low.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+			_lava_low.albedo_color = Color(1.0, 0.42, 0.08)
+			_lava_low.cull_mode = BaseMaterial3D.CULL_DISABLED
+		return _lava_low
 	if _lava_shader == null:
 		_lava_shader = Shader.new()
 		_lava_shader.code = """shader_type spatial;
@@ -489,6 +515,64 @@ func in_lava(p: Vector3) -> bool:
 		if r.has_point(q):
 			return true
 	return false
+
+
+# ------------------------------------------------------------------ v1.3: terrain
+## Walkable low-poly hill / ridge: a frustum (sides-gon) stretched by (sx, sz), convex collision.
+## Keep (r_bottom - r_top) >= ~1.5 * h so slopes stay under 35 degrees (walkable + navmesh).
+func hill(c: Vector3, r_bottom: float, r_top: float, h: float, color: Color, sx := 1.0, sz := 1.0, yaw := 0.0, sides := 7) -> StaticBody3D:
+	var cm := CylinderMesh.new()
+	cm.bottom_radius = r_bottom
+	cm.top_radius = r_top
+	cm.height = h
+	cm.radial_segments = sides
+	cm.rings = 1
+	cm.material = mat(color)
+	var b := StaticBody3D.new()
+	b.collision_layer = 1 | 8
+	b.collision_mask = 0
+	var mi := MeshInstance3D.new()
+	mi.mesh = cm
+	b.add_child(mi)
+	var cs := CollisionShape3D.new()
+	var pts := PackedVector3Array()
+	for i in sides:
+		var a := TAU * float(i) / float(sides)
+		pts.append(Vector3(sin(a) * r_bottom, -h / 2.0, cos(a) * r_bottom))
+		pts.append(Vector3(sin(a) * r_top, h / 2.0, cos(a) * r_top))
+	var sh := ConvexPolygonShape3D.new()
+	sh.points = pts
+	cs.shape = sh
+	b.add_child(cs)
+	b.transform = Transform3D(Basis(Vector3.UP, yaw).scaled(Vector3(sx, 1.0, sz)), c + Vector3(0, h / 2.0 - 0.02, 0))
+	parent.add_child(b)
+	decks.append(c + Vector3(0, h, 0))
+	return b
+
+
+## Raised platform with ramps on the listed sides (0 = +Z, 1 = -Z, 2 = +X, 3 = -X).
+func platform(c: Vector3, size: Vector3, color: Color, ramp_sides := [0, 1], ramp_col := Color(0, 0, 0, 0), pillars := false) -> void:
+	var top := c.y + size.y
+	if pillars:
+		box(Vector3(c.x, top - 0.3, c.z), Vector3(size.x, 0.6, size.z), color, Vector3.ZERO, true, true)
+		for sx in [-1.0, 1.0]:
+			for sz in [-1.0, 1.0]:
+				cyl(Vector3(c.x + sx * (size.x / 2.0 - 0.8), c.y, c.z + sz * (size.z / 2.0 - 0.8)), 0.5, 0.5, size.y - 0.6, color.darkened(0.2), true, 8)
+	else:
+		box(Vector3(c.x, c.y + size.y / 2.0, c.z), size, color, Vector3.ZERO, true, true)
+	decks.append(Vector3(c.x, top, c.z))
+	var rc := ramp_col if ramp_col.a > 0.0 else color.lightened(0.08)
+	var run := size.y * 2.4
+	for sd in ramp_sides:
+		match sd:
+			0:
+				ramp(Vector3(c.x, c.y, c.z + size.z / 2.0 + run), Vector3(c.x, top, c.z + size.z / 2.0 - 0.3), 4.0, rc)
+			1:
+				ramp(Vector3(c.x, c.y, c.z - size.z / 2.0 - run), Vector3(c.x, top, c.z - size.z / 2.0 + 0.3), 4.0, rc)
+			2:
+				ramp(Vector3(c.x + size.x / 2.0 + run, c.y, c.z), Vector3(c.x + size.x / 2.0 - 0.3, top, c.z), 4.0, rc)
+			3:
+				ramp(Vector3(c.x - size.x / 2.0 - run, c.y, c.z), Vector3(c.x - size.x / 2.0 + 0.3, top, c.z), 4.0, rc)
 
 
 # ------------------------------------------------------------------ composite pieces

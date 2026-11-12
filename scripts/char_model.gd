@@ -159,7 +159,9 @@ static func _build_merged(sk: Skeleton3D, optional: Array) -> Dictionary:
 					g["i"].append(base + ii)
 	if names.size() < 2:
 		return {}
-	var am := ArrayMesh.new()
+	# v1.3: build through ImporterMesh so the merged body gets automatic LODs (far droids draw
+	# a fraction of the triangles; viewport.mesh_lod_threshold is raised on Low).
+	var im := ImporterMesh.new()
 	for mat in order:
 		var g: Dictionary = groups[mat]
 		var a := []
@@ -170,9 +172,33 @@ static func _build_merged(sk: Skeleton3D, optional: Array) -> Dictionary:
 		a[Mesh.ARRAY_BONES] = g["b"]
 		a[Mesh.ARRAY_WEIGHTS] = g["w"]
 		a[Mesh.ARRAY_INDEX] = g["i"]
-		am.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, a)
-		am.surface_set_material(am.get_surface_count() - 1, mat)
+		im.add_surface(Mesh.PRIMITIVE_TRIANGLES, a, [], {}, mat)
+	im.generate_lods(25.0, 60.0, [])
+	var am: ArrayMesh = im.get_mesh()
+	# Skinned meshes don't switch LODs on their own, so on Low the body is built straight from the
+	# first simplified LOD (~half the triangles; the models are low-poly so it reads the same).
+	if Game.quality() == 0:
+		var full := 0
+		var low := 0
+		var am2 := ArrayMesh.new()
+		for si in im.get_surface_count():
+			var arr := im.get_surface_arrays(si)
+			full += (arr[Mesh.ARRAY_INDEX] as PackedInt32Array).size()
+			if im.get_surface_lod_count(si) > 0:
+				var li := im.get_surface_lod_indices(si, 0)
+				if li.size() >= 3:
+					arr[Mesh.ARRAY_INDEX] = li
+			low += (arr[Mesh.ARRAY_INDEX] as PackedInt32Array).size()
+			am2.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr)
+			am2.surface_set_material(si, im.get_surface_material(si))
+		am = am2
+		if not _lod_logged:
+			_lod_logged = true
+			print("[lod] Low character tris %d -> %d" % [full / 3, low / 3])
 	return {"mesh": am, "skin": skin, "names": names}
+
+
+static var _lod_logged := false
 
 
 func set_visible_meshes(optional: Array, show: Array) -> void:

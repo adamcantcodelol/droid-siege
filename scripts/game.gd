@@ -5,7 +5,7 @@ const TrooperClass = preload("res://scripts/trooper_class.gd")
 const SAVE_PATH := "user://droid_siege_save.json"
 const DEFAULT_PORT := 7777
 const MAX_PLAYERS := 4
-const GAME_VERSION := "1.2.2"
+const GAME_VERSION := "1.3"
 const MAX_LEVEL := 5
 const GRENADE_COST := 100
 const MAX_GRENADES := 6
@@ -243,6 +243,7 @@ func apply_quality() -> void:
 	vp.scaling_3d_mode = Viewport.SCALING_3D_MODE_BILINEAR
 	vp.scaling_3d_scale = render_scale(q) * dyn_scale
 	vp.msaa_3d = Viewport.MSAA_2X if q == 2 else Viewport.MSAA_DISABLED
+	vp.mesh_lod_threshold = [6.0, 2.0, 1.0][q]   # v1.3: lean on automatic mesh LODs on Low
 	RenderingServer.directional_shadow_atlas_set_size([1024, 2048, 4096][q], true)
 	var CM = load("res://scripts/char_model.gd")
 	CM.anim_lod_far = [20.0, 35.0, 60.0][q]

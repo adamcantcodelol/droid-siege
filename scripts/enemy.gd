@@ -113,6 +113,8 @@ func _ready() -> void:
 		hs.position.y = _hy[clampi(etype, 0, 5)]
 		add_child(hs)
 	_build_model()
+	if hp_label != null and Game.quality() == 0:
+		hp_label.visibility_range_end = 30.0   # Low: far HP tags cost a draw call each
 	if multiplayer.is_server():
 		agent = NavigationAgent3D.new()
 		agent.radius = cap.radius
@@ -232,20 +234,32 @@ func _build_model() -> void:
 			_box(Vector3(0.18, 0.18, 0.4), Vector3(0.7, 1.55, -0.7), Color(0.2, 0.2, 0.22))
 			_box(Vector3(0.12, 0.12, 0.12), Vector3(0.0, 1.9, -0.35), Color(1.0, 0.15, 0.1))  # optic
 			muzzle.position = Vector3(0.7, 1.55, -0.95)
-		5:  # BX commando: slim dark-tan droid with orange markings, rifle + vibroblade (2 extra mats)
+		5:  # BX commando (v1.3 look): tall skeletal mauve droid, burnt-orange joints, slit eyes,
+			# red chest light, black rifle, purple vibrosword on the back. All accents = ONE mesh/material.
 			char_model = CharModel.new()
-			char_model.setup("res://models/robot.glb", 2.0, {"Main": Color(0.42, 0.36, 0.26), "Grey": Color(0.16, 0.15, 0.14)}, COMMANDO_ANIMS)
-			char_model.scale *= Vector3(0.78, 1.0, 0.8)
+			char_model.setup("res://models/robot.glb", 2.15, {"Main": Color(0.36, 0.3, 0.36), "Grey": Color(0.72, 0.34, 0.12)}, COMMANDO_ANIMS)
+			char_model.scale *= Vector3(0.6, 1.0, 0.62)
 			model.add_child(char_model)
-			var orange := Color(0.95, 0.45, 0.1)
-			var dark := Color(0.1, 0.1, 0.11)
-			_box(Vector3(0.5, 0.06, 0.08), Vector3(0, 1.72, -0.36), orange)    # visor stripe
-			_box(Vector3(0.12, 0.06, 0.3), Vector3(-0.33, 1.38, 0.0), orange)  # shoulder flashes
-			_box(Vector3(0.12, 0.06, 0.3), Vector3(0.33, 1.38, 0.0), orange)
-			_box(Vector3(0.08, 0.36, 0.06), Vector3(0, 1.1, -0.2), orange)     # chest mark
-			_box(Vector3(0.06, 0.09, 0.62), Vector3(0.26, 1.12, -0.38), dark)   # E-5 rifle
-			_box(Vector3(0.03, 0.05, 0.55), Vector3(-0.28, 0.95, -0.4), dark)   # vibroblade
-			muzzle.position = Vector3(0.26, 1.12, -0.72)
+			var mauve := Color(0.42, 0.36, 0.42)
+			var orange := Color(0.78, 0.38, 0.12)
+			var white := Color(1.6, 1.6, 1.6)
+			var black := Color(0.06, 0.06, 0.07)
+			var purple := Color(0.55, 0.2, 0.85)
+			model.add_child(_accent_mesh([
+				[Vector3(0.09, 0.025, 0.04), Vector3(-0.09, 1.86, -0.3), white, 0.0],   # slit eyes
+				[Vector3(0.09, 0.025, 0.04), Vector3(0.09, 1.86, -0.3), white, 0.0],
+				[Vector3(0.03, 0.1, 0.03), Vector3(0.0, 1.76, -0.3), black, 0.0],      # vertical grille mouth
+				[Vector3(0.34, 0.3, 0.05), Vector3(0, 1.3, -0.2), mauve, 0.0],          # flat chest plate
+				[Vector3(0.07, 0.07, 0.04), Vector3(0, 1.33, -0.23), Color(1.8, 0.1, 0.05), 0.0],  # red light
+				[Vector3(0.2, 0.08, 0.2), Vector3(-0.3, 1.47, 0.0), orange, 0.0],       # shoulder caps
+				[Vector3(0.2, 0.08, 0.2), Vector3(0.3, 1.47, 0.0), orange, 0.0],
+				[Vector3(0.3, 0.07, 0.22), Vector3(0, 0.98, 0.0), orange, 0.0],         # hip ring
+				[Vector3(0.07, 0.11, 0.66), Vector3(0.24, 1.12, -0.4), black, 0.0],     # compact rifle
+				[Vector3(0.05, 0.16, 0.08), Vector3(0.24, 1.02, -0.3), black, 0.0],     # grip
+				[Vector3(0.05, 1.05, 0.02), Vector3(0.0, 1.35, 0.2), purple, 0.6],      # vibrosword on back (diagonal)
+				[Vector3(0.16, 0.04, 0.05), Vector3(-0.12, 1.0, 0.2), black, 0.6],      # hilt guard
+			]))
+			muzzle.position = Vector3(0.24, 1.12, -0.75)
 	model.add_child(muzzle)
 	load("res://scripts/mech.gd").merge_meshes(model)
 	if etype == 4:
@@ -269,6 +283,37 @@ func _build_model() -> void:
 		hp_label.modulate = Color(1, 0.4, 0.3)
 		hp_label.position.y = 2.5
 		add_child(hp_label)
+
+
+## Several coloured boxes baked into one vertex-coloured mesh (1 draw call). Each entry:
+## [size, position, colour, roll (radians, around Z)].
+static var _accent_mat: StandardMaterial3D = null
+
+
+func _accent_mesh(parts: Array) -> MeshInstance3D:
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	for pt in parts:
+		var bm := BoxMesh.new()
+		bm.size = pt[0]
+		var arr := bm.get_mesh_arrays()
+		var xf := Transform3D(Basis(Vector3.BACK, float(pt[3])), pt[1])
+		var verts: PackedVector3Array = arr[Mesh.ARRAY_VERTEX]
+		var norms: PackedVector3Array = arr[Mesh.ARRAY_NORMAL]
+		var idx: PackedInt32Array = arr[Mesh.ARRAY_INDEX]
+		for k in idx:
+			st.set_color(pt[2])
+			st.set_normal(xf.basis * norms[k])
+			st.add_vertex(xf * verts[k])
+	if _accent_mat == null:
+		_accent_mat = StandardMaterial3D.new()
+		_accent_mat.vertex_color_use_as_albedo = true
+		_accent_mat.roughness = 0.6
+	var mi := MeshInstance3D.new()
+	mi.name = "Accents"
+	mi.mesh = st.commit()
+	mi.material_override = _accent_mat
+	return mi
 
 
 func muzzle_position() -> Vector3:
