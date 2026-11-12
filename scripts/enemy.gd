@@ -9,7 +9,7 @@ const TYPES := {
 	2: {"name": "Droideka", "hp": 130.0, "speed": 7.0, "range": 20.0, "dmg": 7.0, "rof": 0.35, "acc": 0.35, "credits": 40, "shield": 220.0},
 	4: {"name": "B2-HA Anti-Armor", "hp": 280.0, "speed": 2.6, "range": 42.0, "dmg": 75.0, "rof": 3.5, "acc": 0.85, "credits": 60, "shield": 0.0, "anti_armor": true},
 	# Clone Commander difficulty only. Sprints, leaps, dodges aimed fire, flanks, vibroblade melee, brief cloak.
-	5: {"name": "BX Commando Droid", "hp": 300.0, "speed": 8.5, "range": 34.0, "dmg": 13.0, "rof": 0.45, "acc": 0.9, "credits": 100, "shield": 120.0, "melee": 40.0},
+	5: {"name": "BX Commando Droid", "hp": 107.0, "speed": 12.0, "range": 34.0, "dmg": 13.0, "rof": 0.45, "acc": 0.9, "credits": 100, "shield": 40.0, "melee": 40.0},
 }
 const COMMANDO := 5
 enum Act { NONE, ROLL, FLIP, LEAP, MELEE, SIDESTEP }
@@ -445,7 +445,7 @@ func shield_blocks(from: Vector3) -> bool:
 func apply_damage(dmg: float, from: Vector3, explosive: bool) -> bool:
 	if etype == COMMANDO:
 		if act in [Act.ROLL, Act.FLIP, Act.SIDESTEP] and not explosive:
-			dmg *= 0.25   # mid-dodge: most bolts graze
+			dmg *= 0.5   # mid-dodge: bolts graze for half
 		shield_cd = 3.0
 		var soak := minf(shield, dmg)
 		shield -= soak

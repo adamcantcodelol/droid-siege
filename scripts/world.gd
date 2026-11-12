@@ -2709,7 +2709,8 @@ func _test_commando(lp) -> void:
 			capped = false
 	if not capped:
 		fails.append("cap")
-	if a.hp < 400.0 or a.max_shield < 120.0:
+	# Tough but killable: ~150 HP + small 40 shield on Clone Commander, 60-dmg melee.
+	if a.hp < 130.0 or a.hp > 170.0 or a.max_shield > 40.0 or absf(float(a.stats["melee"]) - 60.0) > 0.1 or float(a.stats["speed"]) < 1.15 * 10.0:
 		fails.append("stats hp=%d" % a.hp)
 	var draws := 0
 	for mi in a.model.find_children("*", "MeshInstance3D", true, false):
