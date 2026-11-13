@@ -2612,6 +2612,8 @@ func _test_camview(lp) -> void:
 	if _t_stage > 0:
 		return
 	_t_stage = 1
+	lp.set_first_person(false)   # saved preference may be first person
+	await get_tree().process_frame
 	lp.god = true
 	spawn_cd = 9999.0
 	var ok := true
@@ -2645,21 +2647,42 @@ func _test_camview(lp) -> void:
 	await get_tree().physics_frame
 	Input.action_release("kb_aim")
 	# first person (V): camera at the eyes, own body culled from the camera only
-	Input.action_press("view_toggle")
-	await get_tree().physics_frame
-	Input.action_release("view_toggle")
-	await get_tree().process_frame
+	lp.set_first_person(false)   # start from third person whatever the saved preference is
+	await _press_view_key()
 	var eye_d: float = lp.cam.global_position.distance_to(lp.global_position + Vector3(0, 1.65, 0))
 	var fp_ok: bool = lp.first_person and eye_d < 0.5 and (lp.cam.cull_mask & 2) == 0 and lp.char_model.meshes[0].layers == 2 and lp.deco.all(func(d): return d[0].get_children().all(func(m): return m.layers == 2)) and lp.viewmodel != null and lp.viewmodel.visible
 	print("[test] camview first person: on=%s cam->eyes=%.2f body_culled=%s camlocal=%s pivot=%s cam=%s p=%s" % [lp.first_person, eye_d, (lp.cam.cull_mask & 2) == 0, lp.cam.position, lp.pivot.global_position, lp.cam.global_position, lp.global_position])
-	Input.action_press("view_toggle")
-	await get_tree().physics_frame
-	Input.action_release("view_toggle")
-	await get_tree().process_frame
-	fp_ok = fp_ok and not lp.first_person and (lp.cam.cull_mask & 2) != 0
+	# v1.3.1: first person also works in vehicles (cockpit camera at the hull's top-front)
+	var veh_ok := true
+	if not mechs.is_empty():
+		lp.global_position = mechs[0].global_position + Vector3(2, 0, 0)
+		on_mech_enter(0, lp.peer_id)
+		await get_tree().physics_frame
+		await get_tree().process_frame
+		var mpos: Vector3 = mechs[0].global_position
+		var cam_h: float = lp.cam.global_position.y - lp.global_position.y
+		var cam_back: float = Vector2(lp.cam.global_position.x - lp.global_position.x, lp.cam.global_position.z - lp.global_position.z).length()
+		veh_ok = lp.in_mech == 0 and lp.first_person and cam_h > 0.8 and cam_h < 4.5 and cam_back < 3.0 and (lp.cam.cull_mask & 2) == 0
+		print("[test] camview vehicle first person: in_mech=%d cam_h=%.2f cam_dist=%.2f ok=%s (mech at %s)" % [lp.in_mech, cam_h, cam_back, veh_ok, mpos])
+		lp.exit_mech()
+		await get_tree().physics_frame
+	await _press_view_key()
+	fp_ok = fp_ok and veh_ok and not lp.first_person and (lp.cam.cull_mask & 2) != 0
 	Game.save["fp"] = false
 	Game.finish_test(ok and held and fp_ok, "CAMVIEW local trooper visible in third person + ADS without recoil")
 
+
+
+## Real input path: an InputEventAction goes through _unhandled_input like a V key press.
+func _press_view_key() -> void:
+	for pressed in [true, false]:
+		var ev := InputEventAction.new()
+		ev.action = "view_toggle"
+		ev.pressed = pressed
+		Input.parse_input_event(ev)
+		Input.flush_buffered_events()
+		await get_tree().process_frame
+	await get_tree().process_frame
 
 
 func _test_walls(lp) -> void:

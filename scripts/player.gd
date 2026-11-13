@@ -323,6 +323,10 @@ func _update_anim(delta: float) -> void:
 func _unhandled_input(event: InputEvent) -> void:
 	if not is_local:
 		return
+	if event.is_action_pressed("view_toggle", false) and state == 0 \
+			and not (Game.world != null and Game.world.hud != null and Game.world.hud.is_blocking()):
+		toggle_view()
+		return
 	if event is InputEventMouseMotion and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
 		var sens := Game.mouse_sensitivity * (0.5 if is_aiming else 1.0)
 		rotation.y -= event.relative.x * sens
@@ -467,9 +471,6 @@ func _physics_process(delta: float) -> void:
 				_fire_tank_shell()
 		elif Input.is_action_just_pressed("grenade") and in_mech < 0:
 			_throw_grenade()
-		if Input.is_action_just_pressed("view_toggle"):
-			set_first_person(not first_person)
-			Game.write_save()
 		if Input.is_action_just_pressed("weapon1"):
 			switch_weapon(0)
 		elif Input.is_action_just_pressed("weapon2"):
@@ -674,6 +675,13 @@ func _fire_tank_shell() -> void:
 
 ## V toggles first person: camera at the eyes, own body hidden from this camera (render layer 2)
 ## while it still casts a shadow and stays visible to everyone else.
+func toggle_view() -> void:
+	if emote_id != 0:
+		_stop_emote()
+	set_first_person(not first_person)
+	Game.write_save()
+
+
 func set_first_person(on: bool) -> void:
 	first_person = on
 	Game.save["fp"] = on
@@ -689,7 +697,8 @@ func _place_camera() -> void:
 	if cam == null:
 		return
 	var fp: bool = first_person and in_mech < 0
-	cam.cull_mask = (0xFFFFF & ~2) if fp else 0xFFFFF
+	var fp_veh: bool = first_person and in_mech >= 0   # v1.3.1: cockpit view in vehicles too
+	cam.cull_mask = (0xFFFFF & ~2) if (fp or fp_veh) else 0xFFFFF
 	if viewmodel == null:
 		viewmodel = _build_viewmodel()
 	viewmodel.visible = fp and state == 0
@@ -706,6 +715,14 @@ func _place_camera() -> void:
 			pivot.position.y -= 0.15
 	if fp:
 		cam.position = Vector3(0.0, 0.05, -0.3)
+		return
+	if fp_veh:
+		# driver's eye: top-front of the hull, looking past the guns
+		var vs: Dictionary = MechVisual.stats(veh_vtype)
+		var sz: Vector3 = vs.get("size", Vector3(2, 2, 3))
+		pivot.position.y = float(vs.get("col_y", 1.0)) + sz.y * 0.5 + 0.35
+		spring.position.x = 0.0
+		cam.position = Vector3(0.0, 0.0, -sz.z * 0.5 - 0.15)
 		return
 	var d := clampf(spring.get_hit_length(), MIN_CAM_DIST, maxf(spring.spring_length, MIN_CAM_DIST))
 	cam.position = spring.position + Vector3(0, 0, d)
